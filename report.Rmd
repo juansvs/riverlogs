@@ -1,0 +1,552 @@
+---
+title: "Log crossing activity in a tropical rainforest"
+author: "Juan S. Vargas Soto"
+output: html_document
+bibliography: references.bib
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r global options, include=FALSE}
+knitr::opts_chunk$set(message = FALSE, echo = FALSE)
+```
+
+```{r load libraries, echo=FALSE}
+library(tidyverse)
+library(lubridate)
+```
+
+## Summary
+
+We analyzed how different species of mammals use logs fallen across rivers in a tropical wet forest. We found that most species observed use logs to cross rivers, but there are significant differences among species, some are much more likely to use them. While some factors like the length of the log, its width, and how high it is above the water may increase this probability, these effects do not compensate for baseline differences among species. Also, seasonality does not appear to play an important role in the probability of use of the log, although many of our cameras were only working during the rainy season so this factor is not clear yet. The species that use logs to cross most frequently are species that regularly use tree trunks and branches like coatis, opossums, and ocelots, so crossing these bridges should not represent an important risk. Some species that did not cross the logs, like pacas and tapirs, were nonetheless observed walking in the water, so it is possible that they are also able to cross rivers regularly despite not using logs. This is not the case for agoutis, which had a low probability of crossing, and were also never observed in the river. For agoutis, rivers may therefore represent significant barriers that limit their home range. Considering the diversity and frequency of use of these logs, they may define important linear features in the forest. As such, they could represent also important sites for communication, as seen by the frequent scent-marking, for male coatis in particular.
+
+## Introduction
+
+The goal of this project was to study how trees that have fallen over rivers and streams in tropical forests---effectively creating a temporary bridge---are used by different species of terrestrial vertebrates, focusing particularly on medium to large mammals and ground birds. In tropical wet forests, rivers and streams may constitute significant barriers for movement, limiting the dispersal of animals. However, these forests also have frequent tree falls, which can happen by rivers and connect both sides. Here, we aim to determine if these fallen trees effectively serve as bridges, and which species of animals are able to use them.
+
+## Methods
+
+We searched for logs across rivers throughout the Osa Wildlife Refuge in southern Costa Rica. We placed motion-activated cameras overlooking the logs, and recorded all activity. For every animal detected, we identified the species, whether or not it crossed the log, and annotated any particular behavior, such as scent-marking. Records were organized and annotated using the Timelapse software (@Greenberg2019). We set up 26 cameras overall at 18 different log (8 logs had cameras on both ends). If we ignore a camera that malfunctioned (CLOG6-B), cameras were working for over 6 months on average. Four cameras were working for more than a year (CLOG3-A, CLOG6-A, PLOG5-A,B), one for nearly 2 years (CLOG3-A).
+
+```{r preproc, echo=FALSE}
+# Import data and preprocess
+dat_raw <- read_csv("Data/timelapse_database.csv")
+# Filter to keep only unique records. Make sure to arrange it so that if there
+# is a crossing do not delete it.
+dat <- dat_raw %>% 
+  mutate(station = if_else(str_length(station)==5, str_replace(station, "G", "G0"), station)) %>% # Fix station names
+  filter(!species %in% c("nothing", "setup", "corrupted","uid", 
+                                      "lizard_uid","iguana_green", "bat", "bird", "horse", 
+                                      "people", "dog")) %>% # remove non-animal records
+  group_by(station, species, camera) %>% arrange(DateTime) %>% 
+  mutate(tdif = difftime(DateTime,lag(DateTime),units = "mins")) %>% # time difference between detections
+  mutate(newevent = is.na(tdif) | tdif>duration(5, "minutes")) %>% ungroup() %>% # is the detection a new event?
+  mutate(eventnum = cumsum(newevent)) %>% # label independent events
+  group_by(eventnum) %>% mutate(eventcross = any(crossing)) %>% ungroup() %>% 
+  filter(newevent) %>% select(station, species, DateTime, eventcross, behavior)
+
+# Covariates data import and merge with detections
+log_data <- readxl::read_excel("Data/covariates_data_base.xlsx")
+names(log_data)[1] <- "station"
+dat_wcovs <- dat %>% left_join(log_data)
+```
+
+```{r effort table, echo=FALSE}
+# Table with effort per station
+dat_raw %>% filter(!species %in% c("corrupted", "nothing")) %>% group_by(station, camera) %>% summarise(mint = min(DateTime), maxt = max(DateTime),
+                                            rng = difftime(max(DateTime),min(DateTime), units = "days")) %>% 
+  knitr::kable(caption = "Summary of motion-activated cameras effort", digits = 0, col.names = c("Station","Camera","Start date", "End date", "Effort"))
+```
+
+## Results
+
+### Species observed
+
+We identified 22 species of wild mammals. We also recorded bats and rodents, but these groups are not consistently detected and cannot be properly identified. There were several species of birds, but we keep only one species that is mostly terrestrial for further analyses, the great Curassow *Crax rubra*. Finally, we observed people (82 detections) and domestic animals (5 detections of dogs and 4 of horses) but we do not include these in further analyses. The most common species were tamanduas (*Tamandua mexicana*), followed by coatis (*Nasua narica*), common opossums (*Didelphis marsupialis*), striped skunks (*Conepatus semistriatus*), ocelots (*Leopardus pardalis*), tayras (*Eira barbara*), curassows, pumas (*Puma concolor*), agoutis (*Dasyprocta punctata*), squirrels (*Sciurus granatensis*), pacas (*Cuniculus paca*), and four-eyed opossums (*Philander opossum*). All other species were detected fewer than 10 times. Species did not use the logs equally. For opossums, ocelots, tamanduas, coatis, tayras, pumas, and skunks, crossings constituted over 80% of all sightings. In contrast, species like agoutis and curassows crossed in fewer than 50% of sightings. Species like pacas and peccaries were never seen crossing logs. Raccoons (n = 10), and tapirs (n=1) were detected few times, but were occasionally seen walking in the river. These observations were only possible for a few stations that had a vantage point overlooking both the log and the river.
+
+```{r det summary, echo=FALSE}
+dat %>% count(species, eventcross) %>% 
+  pivot_wider(names_from = eventcross, values_from = n, values_fill = 0) %>% 
+  mutate(detections = `FALSE`+`TRUE`,prop = 100*`TRUE`/(`FALSE`+`TRUE`)) %>%
+  select(species, detections, prop) %>% 
+  arrange(desc(detections)) %>% 
+  knitr::kable(digits = 1, col.names = c("Species","Detections (n)", "Cross freq. (%)"), caption = "Summary of detections of different species of mammals and birds around logs over rivers")
+```
+
+```{r prop var, echo=FALSE, include=FALSE}
+dat %>% group_by(species) %>%
+  filter(n()>10) %>%
+  count(station, species, eventcross) %>%
+  pivot_wider(names_from = eventcross, values_from = n, values_fill = 0) %>%
+  mutate(prop = `TRUE`/(`TRUE`+`FALSE`)) %>%
+  ggplot(aes(fct_reorder(species, prop),prop))+geom_boxplot()+
+  theme_classic(base_size = 14)+
+  theme(axis.text.x = element_text(hjust = 0, angle = -45),
+        plot.margin = margin(r=12, unit="pt") )+
+  labs(x = "Species", y = "Proportion of log crossings")
+```
+
+```{r det summary 2, echo=FALSE, fig.cap="Activity and crossing probability for wild vertebrates near logs above rivers in the Osa Wildlife Refuge, Costa Rica"}
+dat %>% group_by(species) %>% 
+  filter(n()>10) %>% 
+  group_by(station, species) %>% 
+  mutate(prop = 100*sum(eventcross)/n()) %>% 
+  ggplot()+geom_count(aes(fct_reorder(species, prop), station, color = prop))+
+  # summarise(prop = sum(eventcross)/n()) %>% 
+  # ggplot()+geom_raster(aes(y = station, x = species, fill = prop))+
+  theme_classic(base_size = 12)+
+  theme(axis.text.x = element_text(hjust = 0, angle = -45))+
+  scale_color_continuous(type="viridis")+
+  labs(x = "Species", y = "Station", color = "Cross proportion (%)")
+```
+
+We see that the proportion of crossings is mostly consistent across logs for the same species, as seen from the color range observed vertically. This proportion varies mainly across species. The diversity of species at each log is also different. Logs like PLOG05, PLOG06, and PLOG02 detected 15, 14, and 13 species, respectively. PLOG01 and PLOG08 in contrast each recorded only three different species.
+
+### Frequency of crossing
+
+```{r cross freq}
+dat %>% group_by(station) %>% arrange(station,DateTime) %>% mutate(tdif = as.numeric(difftime(lead(DateTime),DateTime, units = "day"))) %>% ungroup() %>% summarise(n = n(), activity = 1/mean(tdif, na.rm = T), sd = 1/sd(tdif, na.rm=T)) 
+```
+
+We observed independent use of the logs on average once every other day. Some stations had higher activity rates, between one and 1.5 sightings per day.
+
+```{r}
+count(dat,eventcross)
+```
+
+There were 1096 independent events, so 1096/4885 trap days = 0.224 /day.
+
+```{r}
+dat %>% group_by(station) %>% mutate(stn_effort = as.numeric(max(DateTime)-min(DateTime))) %>% summarize(freq = n()/mean(stn_effort))
+```
+
+The frequency varies between 0.02 and 1.4 events/day
+
+```{r}
+dat %>% group_by(station) %>% summarise(n=n(),prop = sum(eventcross)/n()) %>% arrange(desc(prop))
+```
+
+### Factors influencing use of logs
+
+We were interested in determining factors that could influence the activity at the log and the probability of crossing. We measured different variables about the log (width, length, height above the water), the river or stream characteristics at that spot (width, depth, flow), and the amount of vegetation (canopy cover). Given the number of covariates, we attempted to reduce it to fewer dimensions by testing for significant correlations among them, and by determining the principal components.
+
+```{r cov correlation, echo=FALSE, fig.cap="Correlation among covariates for logs across rivers in the Osa Wildlife Refuge"}
+covs_cor <- log_data %>% select(-c(1,9,16)) %>% cor()
+covs_cor_p <- log_data %>% select(-c(1,9,16)) %>% corrplot::cor.mtest() 
+corrplot::corrplot(covs_cor,order = "hclust", p.mat = covs_cor_p$p, tl.col = "black", insig = "blank", diag = F, type = "lower", tl.srt = 45)
+```
+
+The covariates were for the most part not strongly correlated to each other. There were some positive correlations between stream width, canopy cover and open percentage. There was also a negative correlation between stream width, canopy cover, and percentage open, and bark. Additionally, stream velocity was positively correlated with log diameter and height above water, and negatively correlated with the velocity of the stream. There are nonetheless many covariates, and it could make sense to reduce the dimensions using a principal components analysis (PCA).
+
+```{r covar pca, echo=FALSE, fig.cap = "Principal component analysis of covariates for logs over rivers in the Osa Wildlife Refuge"}
+pca <- log_data %>% select(-c(1,9,16)) %>% prcomp(scale. = T)
+par(mfrow = c(1,2))
+biplot(pca)
+screeplot(pca)
+```
+
+```{r pca summary, echo=FALSE, include=FALSE}
+summary(pca)
+```
+
+It may be hard to summarize the variables in fewer than 3 components, likely due the low number of strong correlations. Because of this it makes more sense to keep the original variables, and select covariates to include based on relevance and model fit.
+
+```{r pca weights, echo=FALSE, include=FALSE}
+pca$rotation[,1:4] 
+```
+
+### Montly rainfall
+
+Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
+
+|     |     |     |     |     |     |     |     |     |     |     |     |
+|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
+| 77  | 53  | 65  | 141 | 370 | 357 | 373 | 427 | 411 | 627 | 593 | 226 |
+
+```{r}
+rainfall = data.frame(month = 1:12,rain = c(77,53,65,141,370,357,373,427,411,627,593,226))
+```
+
+### Number of species crossing
+
+```{r}
+d1 <- dat %>% filter(eventcross) %>% count(station,species) %>% count(station) %>% 
+  left_join(log_data)
+m1 <-glm(n~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth, data=d1, family = poisson(link = 'log')) 
+plot(m1)
+summary(m1)
+```
+
+### Frequency of crossing
+
+```{r}
+# Calculate weekly frequency
+dat %>% filter(eventcross) %>% 
+  mutate(week = week(DateTime)) %>% count(station,species,week) %>% # group by week of the year
+  ggplot(aes(week,n))+geom_point()
+```
+
+```{r}
+dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10)%>% filter(eventcross) %>% ungroup() %>% 
+  mutate(week = week(DateTime)) %>% count(station,species,week) %>% 
+  left_join(log_data) %>% mutate(season = if_else(week>16&week<48, "rainy","dry")) %>% mutate(across(Log_lenght:Vel_conver,scale))
+freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+`Stream vel`+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
+summary(freqmm)
+```
+
+```{r}
+margins::margins_summary(freqmm)
+```
+
+Only three covariates seem to be influencing the frequency of crossing: canopy cover and river depth have a negative influence on crossing frequency, while log length has a positive effect.
+
+```{r}
+plot(margins::margins(freqmm))
+```
+
+```{r}
+ranef(freqmm) |> dotplot.ranef.mer()
+```
+
+The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
+
+```{r}
+freqmod_nornd <- glm(n ~ Canopy_per+Log_lenght+Diameter+season+`Stream vel`+River_depth, data = dat_glmm_week_freq, family = poisson())
+AIC(freqmod_nornd,freqmm)
+```
+
+The AIC is lower with the random intercept.
+
+#### Model with monthly rainfall
+
+```{r}
+dat_glmm_week_freq_rain <- dat_glmm_week_freq %>% mutate(month = week%/%4.3) %>% left_join(rainfall) %>% mutate(across(Log_lenght:Vel_conver, scale),rain=scale(rain))
+freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain+`Stream vel`+River_depth+(1|species), data = dat_glmm_week_freq_rain, family = poisson())
+summary(freqmm_rain)
+```
+
+```{r}
+ranef(freqmm_rain) %>% dotplot.ranef.mer()
+```
+
+```{r}
+plot(margins::margins(freqmm_rain))
+```
+
+This has similar results to the model with season as a categorical variable.
+
+```{r}
+performance::icc(freqmm_rain)
+```
+
+In this model the contribution of the random effect is much smaller, around 4%.
+
+```{r}
+performance::r2(freqmm_rain)
+```
+
+This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.065.
+
+### Probability of crossing
+
+To analyze how the probability of crossing is influenced by different covariates, we used a binomial generalized linear model (GLM), where the response variable was whether the animal crossed or not for every observation, and with some selected covariates as predictors. In addition to the variables seen previously, I will also include the season, as rain will have significant effects on water level and flow. For one, the rain affects the water level, some streams will become easier to pass, rendering the logs unnecessary. Secondly, animals change their activity ranges in rainy and dry seasons, so there may be differences in overall activity near the streams. There are some clear differences between the species in their behavior and whether they tend to cross logs or not. We include a random effect of species to account for these differences. For this model, we include only species that had 10 or more records over the study period.
+
+```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
+library(lme4)
+# Add the season to the database
+dat_wcovs <- dat_wcovs %>% mutate(season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy"))
+# filter to keep only species with more than 10 records
+dat_glmm <- dat_wcovs %>% group_by(species) %>% filter(n()>10)
+# Build model with season as a covariate, a random effect of species, and multiple covariates
+mm1 <- glmer(eventcross~season+Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
+# model without season
+mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
+#compare the two
+AIC(mm1,mm2)
+```
+
+The second model, without season, performs better than the one with.
+
+```{r}
+performance::check_model(mm2)
+```
+
+The model performs reasonably well, although there is some underestimation around the edges and overestimation around the middle. We fit multiple models with different combinations of the covariates. The best model, according to the AIC, is one that includes the height, diameter and length of the log, as well as the river depth and canopy cover, but not the season. All the covariates, except for river depth, increased the probability of crossing the log. In other words, longer and wider logs, higher above the stream, and more covered are more likely to be crossed, while logs above deeper streams are less likely to be crossed.
+
+```{r mm summary, echo=FALSE, include=FALSE}
+summary(mm2)
+```
+
+#### Seasonality: wettest vs. driest month
+
+An alternative approach to determining the effect of season is to create a separate model with only two months, the wettest and the driest.
+
+This won't work, there are only a few cameras in the dry season. We could calculate instead the frequency of crosses
+
+```{r}
+plot(margins::margins(mm1))
+```
+
+#### Baseline crossing probability
+
+```{r}
+exp(fixef(mm2)[1])/(1+exp(fixef(mm2)[1]))
+```
+
+The baseline probability for all species is pretty high, we estimated it at 0.85 on average. The probability, however, will depend greatly on the species.
+
+```{r}
+ranef(mm2) |> dotplot.ranef.mer()
+```
+
+#### Effect of species
+
+```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
+(as.data.frame(ranef(mm2)) %>% 
+  mutate(int = fixef(mm2)[1]) %>% 
+  mutate(est = exp(condval+int)/(1+exp(condval+int)),
+         hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
+         lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
+  # mutate(sp = fct_relabel(grp, )) %>% 
+  ggplot(aes(grp,est)) +
+  geom_hline(yintercept = 0.85, linetype=2) +
+        geom_point() + 
+        geom_errorbar(aes(ymin=lo,
+                           ymax=hi), width=0)+
+  scale_y_continuous(limits = c(NA,1))+
+  theme_classic(base_size = 14)+
+  theme(axis.text.x = element_text(angle = -45, hjust=0),
+        plot.margin = unit(c(1,6,1,1),'mm'))+
+  labs(x = "Species", y = "Base crossing probability")->psp)
+```
+
+The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, coatis, and tamanduas, their base probability of crossing will be higher than the mean effect. Meanwhile, curassows, agoutis, and pacas, have lower probabilities than the mean. The mean base probability of crossing is 83%, taking the median values for all the covariates. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
+
+```{r base probs, echo=FALSE, fig.cap="Baseline probability of crossing logs across rivers for different species of wild mammals and birds in the Osa Wildlife Refuge"}
+
+data.frame(species = unique(mm2@frame$species),
+           prob = predict(mm2, newdata = data.frame(species = unique(mm2@frame$species), 
+           Log_to_water = median(log_data$Log_to_water), 
+           Diameter = median(log_data$Diameter),
+           Log_lenght = median(log_data$Log_lenght),
+           Canopy_per = median(log_data$Canopy_per),
+           River_depth = median(log_data$River_depth)), random.only = F,type = "response")) %>% ggplot(aes(fct_reorder(species,prob), 100*prob))+geom_point()+
+  theme_classic(base_size = 16)+
+  lims(y = c(0,100))+
+  labs(x = "Species", 
+       y = "Probability of crossing (%)")+
+  theme(axis.text.x = element_text(hjust = 0, angle = -45),
+                plot.margin = margin(r=16, t = 12, unit="pt") ) -> p5
+p5
+```
+
+The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. Additionally, the 95% CIs indicate that there is a true effect of all the covariates on the probability of crossing. It is also possible that the effect of covariates varies across species. However, I tried other models with additional random effects, but none of these models performed better than the one with a random intercept.
+
+#### Effect of covariates
+
+```{r margins}
+marfx <- margins::margins(mm2)
+plot(marfx)
+```
+
+```{r}
+summary(marfx)
+```
+
+The probability of crossing increases by 2.3% for an increase in 1 m in the height above the stream. The probability increases by 0.2% for an additional cm in log diameter. An 1 m increase in log length results in a 1.6% increase in probability. An increase of 1% in canopy cover results in an decrease of 3.2% in the probability. Finally, the probability decreases by 2.2% for every additional centimeter of stream depth. The plots below show how these effects would change the average probability of crossing (regardless of species). For all the covariates there is about a 15% increase or decrease in probability across the range of values observed in the study. Nevertheless, the greatest effects are those given by the species.
+
+```{r effect plots, echo=FALSE, fig.cap="Effects of environmental covariates on the probability of crossing logs across rivers"}
+newdata <- data.frame(Log_to_water = seq(min(mm2@frame$Log_to_water), max(mm2@frame$Log_to_water), length.out = 100), 
+           Diameter = mean(mm2@frame$Diameter), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           River_depth = mean(mm2@frame$River_depth))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p1 <- cbind(newdata, ypred) %>% ggplot(aes(Log_to_water, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Height above water (m)", y="Crossing probability (%)")
+newdata <- data.frame(Canopy_per = seq(min(mm2@frame$Canopy_per), max(mm2@frame$Canopy_per), length.out = 100), 
+           Diameter = mean(mm2@frame$Diameter), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           River_depth = mean(mm2@frame$River_depth))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p2 <- cbind(newdata, ypred) %>% ggplot(aes(Canopy_per, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Canopy cover (%)", y="Crossing probability (%)")
+newdata <- data.frame(Diameter = seq(min(mm2@frame$Diameter), max(mm2@frame$Diameter), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           River_depth = mean(mm2@frame$River_depth))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p3 <- cbind(newdata, ypred) %>% ggplot(aes(Diameter, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Log diameter (cm)", y="Crossing probability (%)")
+newdata <- data.frame(River_depth = seq(min(mm2@frame$River_depth), max(mm2@frame$River_depth), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           Diameter = mean(mm2@frame$Diameter))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p4 <- cbind(newdata, ypred) %>% ggplot(aes(River_depth, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "River depth (cm)", y="Crossing probability (%)")
+newdata <- data.frame(Log_lenght = seq(min(mm2@frame$Log_lenght), max(mm2@frame$Log_lenght), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           River_depth = mean(mm2@frame$River_depth), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           Diameter = mean(mm2@frame$Diameter))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p5 <- cbind(newdata, ypred) %>% ggplot(aes(Log_lenght, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Log length (m)", y="Crossing probability (%)")
+cowplot::plot_grid(p1,p3,p5, p2,p4)
+```
+
+```{r}
+margins::margins_summary(mm2) %>% mutate(AME=AME+1)
+```
+
+Export combined figure
+
+```{r combfig}
+library(cowplot)
+png("figures/covar_effects.png",width = 21,height = 9, units = 'cm',res = 300,pointsize = 12,bg = 'white')
+plot_grid(psp,plot_grid(p1,p3,p5, p2,p4, align = 'hv',labels=c('b','c','d','e','f'), label_x = -0.05),rel_widths = c(0.4,0.6), labels = 'a',label_x = -0.05)
+dev.off()
+```
+
+### Noteworthy behaviors
+
+We see that many species use the logs, at multiple stations more than 10 different species were observed. This means that these features may be acting also as ways of communicating across and within species. In fact, we observed coatis (n = 23), common opossums (n = 1), striped skunks (n = 17), scent-marking on the logs. We also observed tamanduas defecating on logs on two occasions. It could be worth exploring whether these logs are important marking sites for territorial animals, and whether scent-marking prevents use by conspecifics. In addition to scent-marking sites, logs may act as a food source. We observed tamanduas and striped skunks foraging by removing the tree bark and searching for ants underneath, 10 times for tamanduas, but only once for skunks. We have observed this behavior in previous studies in the same area, so it is unlikely that logs across rivers constitute a more important source of food than logs fallen in the forest.
+
+### Time to event
+
+Another interesting analysis is the delay between detections of different individuals. Considering the scent-marking behavior, it is possible that individuals may be deterred from approaching or crossing the log if a conspecific, or a potential predator, has recently crossed. We follow the approach in [@Niedballa2019], who estimate the delay between detections at every site. For two species A and B, if there is avoidance or attraction of one with respect to the other, then the lag of A after B may be different than the lag of B after A. The effect is estimated using a linear model, with the log-transformed lags as a response variable.
+
+#### Model
+
+```{r}
+#' First see if there are enough records, the paper by Niedballa
+#' suggests you need at least 25 records for each species to get 
+#' a proper estimation. I'll set a lower threshold of 20
+d <- dat %>% group_by(station,species) %>% 
+  filter(n()>20) %>% # filter species-stations with few records
+  split(~station) 
+spcomb <- lapply(d, function(x) outer(x$species,x$species,paste, sep="-"))
+tdif <- lapply(d, function(x) outer(x$DateTime, x$DateTime, difftime, units = "mins"))
+ddif <- data.frame(station = rep(names(spcomb), times = sapply(spcomb, length)), 
+                sppair = unlist(spcomb), tdif = unlist(tdif)) %>% 
+  filter(tdif > 0, # only positive differences
+         tdif <= 24*60) %>% # only differences less than a day
+  # mutate(spp = str_split(sppair, "-")) %>% 
+  mutate(sp2 = gsub(replacement = "",x = sppair,pattern = "-{1}[[:alpha:]]+_?[[:alpha:]]+"),
+         sp1 = gsub(replacement = "",x = sppair,pattern = "[[:alpha:]]+_?[[:alpha:]]+-{1}")) %>% 
+  rowwise() %>%
+  mutate(sporder1 = str_sort(c(sp2,sp1))[1],
+         sporder2 = str_sort(c(sp2,sp1))[2],
+         spp = paste(sporder1,sporder2, sep = "-")) %>% 
+  filter(sp1!=sp2) %>% 
+  split(~spp)
+# Create model, glm with log link
+lms <- lapply(ddif, \(x) glm(tdif~sppair, data = x, family = gaussian(link = "log")))
+# # I tried to create also a glmm with station as a random variable, but there are stations with only one event so that doesn't work
+# tte_glmms <- lapply(d, \(x) glmer(tdif~sppair+(1|station), data = x, family = gaussian(link = "log")))
+
+# Select models with significant coefs
+sig_mods <- which(sapply(lms, \(x) summary.glm(x)[["coefficients"]][2,4])<0.1)
+# Get predicted times, degrees of freedom, p values and coefficient (link)
+lapply(lms[sig_mods], \(x) cbind(spp = x$xlevels[[1]],
+                                 t_pred = predict(x, newdata = x$xlevels, type = "response"),
+                                 df = x$df.residual,
+                                 p = summary(x)[["coefficients"]][2,4],
+                                 beta = summary(x)[["coefficients"]][2,2]))
+```
+
+#### Observed time differences
+
+The following is the mean observed time difference between detections of a focal species and any other species at a given site
+
+```{r}
+do.call(rbind, ddif) %>% group_by(sp2) %>%
+  summarise(tmean=mean(tdif)/60, tsd = sd(tdif)/60) %>% 
+  arrange(desc(tmean))
+
+```
+
+This is the difference for the same species
+
+```{r}
+dsame <- data.frame(station = rep(names(spcomb), times = sapply(spcomb, length)), 
+                sppair = unlist(spcomb), tdif = unlist(tdif)) %>% 
+  filter(tdif > 0, # only positive differences
+         tdif <= 24*60) %>% # only differences less than a day
+  # mutate(spp = str_split(sppair, "-")) %>% 
+  mutate(sp2 = gsub(replacement = "",x = sppair,pattern = "-{1}[[:alpha:]]+_?[[:alpha:]]+"),
+         sp1 = gsub(replacement = "",x = sppair,pattern = "[[:alpha:]]+_?[[:alpha:]]+-{1}"))  %>% 
+  filter(sp1==sp2)
+
+# plot
+ggplot(dsame, aes(gsub(pattern = "-{1}[[:graph:]]+",x = sppair,replacement = ""), tdif))+geom_boxplot()+
+  theme_classic(base_size = 12)+
+  labs(y = "Time difference (minutes)",
+       x = "Species")
+```
+
+These are the values for waiting time for the same species
+
+```{r}
+dsame %>% group_by(sp2) %>% summarise(tmean = mean(tdif)/60,twd = sd(tdif)/60)
+```
+
+We see that the interspecific waiting times are all higher than the respective conspecific wait times.
+
+Plot this
+
+```{r}
+tdifcomb <- data.frame(station = rep(names(spcomb), times = sapply(spcomb, length)), 
+                sppair = unlist(spcomb), tdif = unlist(tdif)) %>% 
+  filter(tdif > 0, # only positive differences
+         tdif <= 24*60) %>% # only differences less than a day
+  # mutate(spp = str_split(sppair, "-")) %>% 
+  mutate(sp2 = gsub(replacement = "",x = sppair,pattern = "-{1}[[:alpha:]]+_?[[:alpha:]]+"),
+         sp1 = gsub(replacement = "",x = sppair,pattern = "[[:alpha:]]+_?[[:alpha:]]+-{1}"))
+tdifcomb  %>% ggplot(aes(sp1,tdif))+
+  geom_violin(aes(fill = (sp2==sp1)))+
+  theme_classic(base_size = 16)+
+  theme(axis.text.x = element_text(angle = -45,hjust=0))+
+  labs(x = "Species 1", y = "Time difference (min)", fill = "Conspecific")
+```
+
+#### Model Summaries
+
+```{r}
+lapply(lms[sig_mods], summary.glm)
+```
+
+For most species pairs there was no evidence of temporal avoidance or attraction. We found evidence of shorter lags, suggestive of attraction, for skunks ($\beta=-0.69, t_{58}=-4.46, p < 0.01$) and opossums ($\beta=-0.34, t_{11}=2.03, p=0.067$) coming after coatis. Conversely, we found evidence suggestive of avoidance for common opossums coming after tamanduas ($\beta=-0.45, t_{17}=-1.93, p=0.071$), and of attraction for opossums coming after tayras ($\beta=0.74, t_{12}=3.18, p=0.0080$) and skunks ($\beta=0.70, t_{25}=2.23,p=0.035$).
+
+This figure shows the observed lags in minutes for the species pairs that we found a difference for.
+
+```{r}
+# plot lags
+do.call(rbind,d[sig_mods]) %>% 
+  ggplot(aes(spp,tdif))+geom_boxplot(aes(fill = sppair))+
+  theme_classic(base_size = 12)+
+  labs(y = "Time difference (minutes)",
+       x = "Species pairs")+
+  theme(axis.text.x = element_text(hjust = 0, angle = -45))
+```
+
+I also determined the lag for individuals of the same species.
+
+```{r}
+# I could also buid a mixed model with these data
+m <- glm(tdif~sppair, data = d, family = gaussian(link = "log"))
+summary(m)
+```
+
+I created a linear model with the species as a predictor, and the time lag as a response. I used only the same-species times, to find the mean lag, and only times less than 12 h away to avoid bimodal distributions. The model estimates a mean lag of 175 minutes, or almost 3 hours, and there was no clear difference for any species.
+
+## References
