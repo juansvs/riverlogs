@@ -49,6 +49,8 @@ dat <- dat_raw %>%
 log_data <- readxl::read_excel("Data/covariates_data_base.xlsx")
 names(log_data)[1] <- "station"
 dat_wcovs <- dat %>% left_join(log_data)
+log_data_scaled <- mutate(log_data, across(Log_lenght:Vel_conver,scale))
+dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 ```
 
 ```{r effort table, echo=FALSE}
@@ -165,6 +167,7 @@ Below is the average montly precipitation in Pto. Jimenez, which we can use as a
 
 ```{r}
 rainfall = data.frame(month = 1:12,rain = c(77,53,65,141,370,357,373,427,411,627,593,226))
+rainfall <- mutate(rainfall,rain_sc = scale(rain))
 ```
 
 ### Number of species crossing
@@ -188,9 +191,9 @@ dat %>% filter(eventcross) %>%
 
 ```{r}
 dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10)%>% filter(eventcross) %>% ungroup() %>% 
-  mutate(week = week(DateTime)) %>% count(station,species,week) %>% 
-  left_join(log_data) %>% mutate(season = if_else(week>16&week<48, "rainy","dry")) %>% mutate(across(Log_lenght:Vel_conver,scale))
-freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+`Stream vel`+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
+  mutate(week = week(DateTime)) %>% 
+  count(station,species,week) %>% mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% left_join(rainfall) %>% left_join(log_data_scaled)
+freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
 summary(freqmm)
 ```
 
@@ -211,7 +214,7 @@ ranef(freqmm) |> dotplot.ranef.mer()
 The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
 
 ```{r}
-freqmod_nornd <- glm(n ~ Canopy_per+Log_lenght+Diameter+season+`Stream vel`+River_depth, data = dat_glmm_week_freq, family = poisson())
+freqmod_nornd <- glm(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth, data = dat_glmm_week_freq, family = poisson())
 AIC(freqmod_nornd,freqmm)
 ```
 
@@ -220,8 +223,7 @@ The AIC is lower with the random intercept.
 #### Model with monthly rainfall
 
 ```{r}
-dat_glmm_week_freq_rain <- dat_glmm_week_freq %>% mutate(month = week%/%4.3) %>% left_join(rainfall) %>% mutate(across(Log_lenght:Vel_conver, scale),rain=scale(rain))
-freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain+`Stream vel`+River_depth+(1|species), data = dat_glmm_week_freq_rain, family = poisson())
+freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
 summary(freqmm_rain)
 ```
 
@@ -239,13 +241,13 @@ This has similar results to the model with season as a categorical variable.
 performance::icc(freqmm_rain)
 ```
 
-In this model the contribution of the random effect is much smaller, around 4%.
+In this model the contribution of the random effect is small, around 3%.
 
 ```{r}
 performance::r2(freqmm_rain)
 ```
 
-This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.065.
+This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.096.
 
 ### Probability of crossing
 
@@ -254,7 +256,7 @@ To analyze how the probability of crossing is influenced by different covariates
 ```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
 library(lme4)
 # Add the season to the database
-dat_wcovs <- dat_wcovs %>% mutate(season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy"))
+dat_wcovs <- dat_wcovs %>% mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall)
 # filter to keep only species with more than 10 records
 dat_glmm <- dat_wcovs %>% group_by(species) %>% filter(n()>10)
 # Build model with season as a covariate, a random effect of species, and multiple covariates
@@ -276,12 +278,6 @@ The model performs reasonably well, although there is some underestimation aroun
 ```{r mm summary, echo=FALSE, include=FALSE}
 summary(mm2)
 ```
-
-#### Seasonality: wettest vs. driest month
-
-An alternative approach to determining the effect of season is to create a separate model with only two months, the wettest and the driest.
-
-This won't work, there are only a few cameras in the dry season. We could calculate instead the frequency of crosses
 
 ```{r}
 plot(margins::margins(mm1))
@@ -321,24 +317,6 @@ ranef(mm2) |> dotplot.ranef.mer()
 ```
 
 The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, coatis, and tamanduas, their base probability of crossing will be higher than the mean effect. Meanwhile, curassows, agoutis, and pacas, have lower probabilities than the mean. The mean base probability of crossing is 83%, taking the median values for all the covariates. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
-
-```{r base probs, echo=FALSE, fig.cap="Baseline probability of crossing logs across rivers for different species of wild mammals and birds in the Osa Wildlife Refuge"}
-
-data.frame(species = unique(mm2@frame$species),
-           prob = predict(mm2, newdata = data.frame(species = unique(mm2@frame$species), 
-           Log_to_water = median(log_data$Log_to_water), 
-           Diameter = median(log_data$Diameter),
-           Log_lenght = median(log_data$Log_lenght),
-           Canopy_per = median(log_data$Canopy_per),
-           River_depth = median(log_data$River_depth)), random.only = F,type = "response")) %>% ggplot(aes(fct_reorder(species,prob), 100*prob))+geom_point()+
-  theme_classic(base_size = 16)+
-  lims(y = c(0,100))+
-  labs(x = "Species", 
-       y = "Probability of crossing (%)")+
-  theme(axis.text.x = element_text(hjust = 0, angle = -45),
-                plot.margin = margin(r=16, t = 12, unit="pt") ) -> p5
-p5
-```
 
 The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. Additionally, the 95% CIs indicate that there is a true effect of all the covariates on the probability of crossing. It is also possible that the effect of covariates varies across species. However, I tried other models with additional random effects, but none of these models performed better than the one with a random intercept.
 
