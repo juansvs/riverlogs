@@ -102,7 +102,7 @@ dat %>% group_by(species) %>%
   labs(x = "Species", y = "Station", color = "Cross proportion (%)")
 ```
 
-We see that the proportion of crossings is mostly consistent across logs for the same species, as seen from the color range observed vertically. This proportion varies mainly across species. The diversity of species at each log is also different. Logs like PLOG05, PLOG06, and PLOG02 detected 15, 14, and 13 species, respectively. PLOG01 and PLOG08 in contrast each recorded only three different species.
+We see that the proportion of crossings is mostly consistent across logs for the same species, as seen from the color range observed vertically, with maybe the exception of tayras. This proportion varies mainly across species. The diversity of species at each log is also different. Logs like PLOG05, PLOG06, and PLOG02 detected 15, 14, and 13 species, respectively. PLOG01 and PLOG08 in contrast each recorded only three different species.
 
 ### Frequency of crossing
 
@@ -141,7 +141,7 @@ corrplot::corrplot(covs_cor,order = "hclust", p.mat = covs_cor_p$p, tl.col = "bl
 The covariates were for the most part not strongly correlated to each other. There were some positive correlations between stream width, canopy cover and open percentage. There was also a negative correlation between stream width, canopy cover, and percentage open, and bark. Additionally, stream velocity was positively correlated with log diameter and height above water, and negatively correlated with the velocity of the stream. There are nonetheless many covariates, and it could make sense to reduce the dimensions using a principal components analysis (PCA).
 
 ```{r covar pca, echo=FALSE, fig.cap = "Principal component analysis of covariates for logs over rivers in the Osa Wildlife Refuge"}
-pca <- log_data %>% select(-c(1,9,16)) %>% prcomp(scale. = T)
+pca <- log_data %>% select(2:8,10) %>% prcomp(scale. = T)
 par(mfrow = c(1,2))
 biplot(pca)
 screeplot(pca)
@@ -151,13 +151,17 @@ screeplot(pca)
 summary(pca)
 ```
 
-It may be hard to summarize the variables in fewer than 3 components, likely due the low number of strong correlations. Because of this it makes more sense to keep the original variables, and select covariates to include based on relevance and model fit.
+It may be hard to summarize the variables in fewer than 3 components. Because of this it makes more sense to keep the original variables, and select covariates to include based on relevance and model fit. Here are the variables that I believe should be relevant:
 
-```{r pca weights, echo=FALSE, include=FALSE}
-pca$rotation[,1:4] 
-```
+-   Log diameter
 
-### Montly rainfall
+-   Stream width
+
+-   Height above water
+
+-   Seasonality for frequency and probability of crossing
+
+### Monthly rainfall
 
 Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
 
@@ -172,15 +176,23 @@ rainfall <- mutate(rainfall,rain_sc = scale(rain))
 
 ### Number of species crossing
 
+There doesn't seem to be any factor that determines the number of species crossing at each station. The only one where it could seem there is an important effect is the log diameter, where wider logs increase the number of species that cross it.
+
 ```{r}
 d1 <- dat %>% filter(eventcross) %>% count(station,species) %>% count(station) %>% 
-  left_join(log_data)
-m1 <-glm(n~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth, data=d1, family = poisson(link = 'log')) 
+  left_join(log_data_scaled)
+m1 <-glm(n~Log_to_water+Diameter+Stream_width+River_depth, data=d1, family = poisson(link = 'log')) 
+par(mfrow=c(2,2))
 plot(m1)
+```
+
+```{r}
 summary(m1)
 ```
 
 ### Frequency of crossing
+
+We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies.
 
 ```{r}
 # Calculate weekly frequency
@@ -189,10 +201,29 @@ dat %>% filter(eventcross) %>%
   ggplot(aes(week,n))+geom_point()
 ```
 
+Below I create a database with the number of weekly detection for every station and species
+
 ```{r}
+temp <- dat %>% mutate(week = week(DateTime)) %>% 
+  group_by(station) %>% summarise(minw = min(week),maxw=max(week))
+stn_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% do.call(rbind,.)
+rm(temp)
+stn_sp_weeks <- expand_grid(stn_weeks, species = pull(distinct(dat, species)))
+```
+
+```{r}
+# Create database for model
 dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10)%>% filter(eventcross) %>% ungroup() %>% 
   mutate(week = week(DateTime)) %>% 
-  count(station,species,week) %>% mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% left_join(rainfall) %>% left_join(log_data_scaled)
+  count(station,species,week) %>% 
+  right_join(stn_sp_weeks) %>% 
+  mutate(n = replace_na(n,0)) %>% 
+  mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% 
+  left_join(rainfall) %>% left_join(log_data_scaled) 
+```
+
+```{r}
+# run model. Mixed effects model of number of detections per week wrt covariates. 
 freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
 summary(freqmm)
 ```
@@ -256,50 +287,46 @@ To analyze how the probability of crossing is influenced by different covariates
 ```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
 library(lme4)
 # Add the season to the database
-dat_wcovs <- dat_wcovs %>% mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall)
+dat_wcovs_scaled <- dat_wcovs %>% mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall)
 # filter to keep only species with more than 10 records
-dat_glmm <- dat_wcovs %>% group_by(species) %>% filter(n()>10)
+dat_glmm <- dat_wcovs_scaled %>% group_by(species) %>% filter(n()>10) %>% ungroup() %>% mutate(month = month(DateTime)) %>% left_join(rainfall) %>% mutate(season = if_else(month>4 & month<12, "rainy","dry"), rain = scale(rain))
 # Build model with season as a covariate, a random effect of species, and multiple covariates
-mm1 <- glmer(eventcross~season+Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
-# model without season
+mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+rain+(1|species), data=dat_glmm, family = "binomial")
+# model without season or rain
 mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
 #compare the two
 AIC(mm1,mm2)
 ```
 
-The second model, without season, performs better than the one with.
+The second model, without season, performs better than the one with. The difference in AIC is less than 2, so the mothers are actually comparable.
 
 ```{r}
-performance::check_model(mm2)
+performance::check_model(mm1)
 ```
 
 The model performs reasonably well, although there is some underestimation around the edges and overestimation around the middle. We fit multiple models with different combinations of the covariates. The best model, according to the AIC, is one that includes the height, diameter and length of the log, as well as the river depth and canopy cover, but not the season. All the covariates, except for river depth, increased the probability of crossing the log. In other words, longer and wider logs, higher above the stream, and more covered are more likely to be crossed, while logs above deeper streams are less likely to be crossed.
 
 ```{r mm summary, echo=FALSE, include=FALSE}
-summary(mm2)
-```
-
-```{r}
-plot(margins::margins(mm1))
+summary(mm1)
 ```
 
 #### Baseline crossing probability
 
 ```{r}
-exp(fixef(mm2)[1])/(1+exp(fixef(mm2)[1]))
+exp(fixef(mm1)[1])/(1+exp(fixef(mm1)[1]))
 ```
 
 The baseline probability for all species is pretty high, we estimated it at 0.85 on average. The probability, however, will depend greatly on the species.
 
 ```{r}
-ranef(mm2) |> dotplot.ranef.mer()
+ranef(mm1) |> dotplot.ranef.mer()
 ```
 
 #### Effect of species
 
 ```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
-(as.data.frame(ranef(mm2)) %>% 
-  mutate(int = fixef(mm2)[1]) %>% 
+(as.data.frame(ranef(mm1)) %>% 
+  mutate(int = fixef(mm1)[1]) %>% 
   mutate(est = exp(condval+int)/(1+exp(condval+int)),
          hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
          lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
@@ -323,7 +350,7 @@ The confidence intervals for the model indicate that the inter-species variance 
 #### Effect of covariates
 
 ```{r margins}
-marfx <- margins::margins(mm2)
+marfx <- margins::margins(mm1)
 plot(marfx)
 ```
 
@@ -526,5 +553,3 @@ summary(m)
 ```
 
 I created a linear model with the species as a predictor, and the time lag as a response. I used only the same-species times, to find the mean lag, and only times less than 12 h away to avoid bimodal distributions. The model estimates a mean lag of 175 minutes, or almost 3 hours, and there was no clear difference for any species.
-
-## References
