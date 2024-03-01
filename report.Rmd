@@ -206,9 +206,10 @@ Below I create a database with the number of weekly detection for every station 
 ```{r}
 temp <- dat %>% mutate(week = week(DateTime)) %>% 
   group_by(station) %>% summarise(minw = min(week),maxw=max(week))
-stn_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% do.call(rbind,.)
+stn_sp_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% 
+  do.call(rbind,.) %>% 
+  full_join(distinct(select(dat, station, species)))
 rm(temp)
-stn_sp_weeks <- expand_grid(stn_weeks, species = pull(distinct(dat, species)))
 ```
 
 ```{r}
@@ -228,14 +229,29 @@ freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_dep
 summary(freqmm)
 ```
 
+The model seems to be zero-inflated. It is recommended to use a negative binomial distribution instead.
+
 ```{r}
-margins::margins_summary(freqmm)
+performance::check_zeroinflation(freqmm)
+```
+
+```{r}
+freqmm_negbin <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = negative.binomial(1))
+performance::check_zeroinflation(freqmm_negbin)
+```
+
+```{r}
+summary(freqmm_negbin)
+```
+
+```{r}
+margins::margins_summary(freqmm_negbin)
 ```
 
 Only three covariates seem to be influencing the frequency of crossing: canopy cover and river depth have a negative influence on crossing frequency, while log length has a positive effect.
 
 ```{r}
-plot(margins::margins(freqmm))
+plot(margins::margins(freqmm_negbin))
 ```
 
 ```{r}
