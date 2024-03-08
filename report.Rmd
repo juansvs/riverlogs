@@ -14,11 +14,15 @@ knitr::opts_chunk$set(message = FALSE, echo = FALSE)
 ```{r load libraries, echo=FALSE}
 library(tidyverse)
 library(lubridate)
+library(lme4)
+library(performance)
+library(margins)
 ```
 
 ## Summary
 
-We analyzed how different species of mammals use logs fallen across rivers in a tropical wet forest. We found that most species observed use logs to cross rivers, but there are significant differences among species, some are much more likely to use them. While some factors like the length of the log, its width, and how high it is above the water may increase this probability, these effects do not compensate for baseline differences among species. Also, seasonality does not appear to play an important role in the probability of use of the log, although many of our cameras were only working during the rainy season so this factor is not clear yet. The species that use logs to cross most frequently are species that regularly use tree trunks and branches like coatis, opossums, and ocelots, so crossing these bridges should not represent an important risk. Some species that did not cross the logs, like pacas and tapirs, were nonetheless observed walking in the water, so it is possible that they are also able to cross rivers regularly despite not using logs. This is not the case for agoutis, which had a low probability of crossing, and were also never observed in the river. For agoutis, rivers may therefore represent significant barriers that limit their home range. Considering the diversity and frequency of use of these logs, they may define important linear features in the forest. As such, they could represent also important sites for communication, as seen by the frequent scent-marking, for male coatis in particular.
+We analyzed how different species of mammals use logs fallen across rivers in a tropical wet forest. We found that most species observed use logs to cross rivers, but there are significant differences among species, both in the frequency of detection at these logs, and the probability that they will cross; some are much more likely to use them. While some factors like the length of the log, its width, and how high it is above the water may increase this probability, these effects are small compared to baseline differences among species. Also, seasonality does not appear to play an important role in the probability of use of the log, although many of our cameras were only working during the rainy season so this factor is not clear yet. 
+The species that use logs to cross most frequently are species that regularly use tree trunks and branches like coatis, opossums, and ocelots, so crossing these bridges should not represent an important risk. Some species that did not cross the logs, like pacas and tapirs, were nonetheless observed walking in the water, so it is possible that they are also able to cross rivers regularly despite not using logs. This is not the case for agoutis, which had a low probability of crossing, and were also never observed in the river. For agoutis, rivers may therefore represent significant barriers that limit their home range. Considering the diversity and frequency of use of these logs, they may define important linear features in the forest. As such, they could represent also important sites for communication, as seen by the frequent scent-marking, for male coatis in particular.
 
 ## Introduction
 
@@ -26,7 +30,7 @@ The goal of this project was to study how trees that have fallen over rivers and
 
 ## Methods
 
-We searched for logs across rivers throughout the Osa Wildlife Refuge in southern Costa Rica. We placed motion-activated cameras overlooking the logs, and recorded all activity. For every animal detected, we identified the species, whether or not it crossed the log, and annotated any particular behavior, such as scent-marking. Records were organized and annotated using the Timelapse software (@Greenberg2019). We set up 26 cameras overall at 18 different log (8 logs had cameras on both ends). If we ignore a camera that malfunctioned (CLOG6-B), cameras were working for over 6 months on average. Four cameras were working for more than a year (CLOG3-A, CLOG6-A, PLOG5-A,B), one for nearly 2 years (CLOG3-A).
+We searched for logs across rivers throughout the Osa Wildlife Refuge in southern Costa Rica. We placed motion-activated cameras overlooking the logs, and recorded all activity. For every animal detected, we identified the species, whether or not it crossed the log, and annotated any particular behavior, such as scent-marking. Records were organized and annotated using the Timelapse software (@Greenberg2019). We set up 26 cameras overall at 18 different log (8 logs had cameras on both ends). If we ignore a camera that malfunctioned (CLOG6-B), cameras were working for over 6 months on average. Three cameras were working for more than a year (CLOG6-A, PLOG5-A,B), one for nearly 2 years (CLOG3-A).
 
 ```{r preproc, echo=FALSE}
 # Import data and preprocess
@@ -49,18 +53,24 @@ dat <- dat_raw %>%
 log_data <- readxl::read_excel("Data/covariates_data_base.xlsx")
 names(log_data)[1] <- "station"
 dat_wcovs <- dat %>% left_join(log_data)
+# scale covariates for model fitting, join with detection data
 log_data_scaled <- mutate(log_data, across(Log_lenght:Vel_conver,scale))
 dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 ```
+## Results
 
+### Effort
 ```{r effort table, echo=FALSE}
 # Table with effort per station
 dat_raw %>% filter(!species %in% c("corrupted", "nothing")) %>% group_by(station, camera) %>% summarise(mint = min(DateTime), maxt = max(DateTime),
                                             rng = difftime(max(DateTime),min(DateTime), units = "days")) %>% 
   knitr::kable(caption = "Summary of motion-activated cameras effort", digits = 0, col.names = c("Station","Camera","Start date", "End date", "Effort"))
 ```
+```{r}
+dat_raw %>% filter(!species %in% c("corrupted", "nothing")) %>% 
+  ggplot(aes(DateTime, station, color = camera))+stat_summary(fun.min = min, fun.max = max, geom = 'linerange', position = position_dodge(width = 0.3))
+```
 
-## Results
 
 ### Species observed
 
@@ -112,10 +122,6 @@ dat %>% group_by(station) %>% arrange(station,DateTime) %>% mutate(tdif = as.num
 
 We observed independent use of the logs on average once every other day. Some stations had higher activity rates, between one and 1.5 sightings per day.
 
-```{r}
-count(dat,eventcross)
-```
-
 There were 1096 independent events, so 1096/4885 trap days = 0.224 /day.
 
 ```{r}
@@ -127,6 +133,106 @@ The frequency varies between 0.02 and 1.4 events/day
 ```{r}
 dat %>% group_by(station) %>% summarise(n=n(),prop = sum(eventcross)/n()) %>% arrange(desc(prop))
 ```
+
+### Frequency of crossing
+
+We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies.
+
+```{r}
+# Calculate weekly frequency
+dat %>% filter(eventcross) %>% 
+  mutate(week = week(DateTime)) %>% count(station,species,week) %>% # group by week of the year
+  ggplot(aes(week,n))+geom_point()
+```
+
+Below I create a database with the number of weekly detection for every station and species
+
+```{r}
+temp <- dat %>% mutate(week = week(DateTime)) %>% 
+  group_by(station) %>% summarise(minw = min(week),maxw=max(week))
+stn_sp_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% 
+  do.call(rbind,.) %>% 
+  full_join(distinct(select(dat, station, species)))
+rm(temp)
+```
+
+```{r}
+# Create database for model
+dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10)%>% filter(eventcross) %>% ungroup() %>% 
+  mutate(week = week(DateTime)) %>% 
+  count(station,species,week) %>% 
+  right_join(stn_sp_weeks) %>% 
+  mutate(n = replace_na(n,0)) %>% 
+  mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% 
+  left_join(rainfall) %>% left_join(log_data_scaled) 
+```
+
+```{r}
+# run model. Mixed effects model of number of detections per week wrt covariates. 
+freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
+summary(freqmm)
+```
+
+The model seems to be zero-inflated. It is recommended to use a negative binomial distribution instead.
+
+```{r}
+performance::check_zeroinflation(freqmm)
+```
+
+```{r}
+freqmm_negbin <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = negative.binomial(1))
+performance::check_zeroinflation(freqmm_negbin)
+```
+
+```{r}
+summary(freqmm_negbin)
+```
+
+```{r}
+margins::margins_summary(freqmm_negbin)
+```
+
+```{r}
+ranef(freqmm_negbin) |> dotplot.ranef.mer()
+```
+
+The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
+
+```{r}
+freqmod_nornd <- glm(n ~ Canopy_per + Log_lenght + Diameter + season + Log_to_water +      River_depth, data = dat_glmm_week_freq, family = negative.binomial(1))
+AIC(freqmod_nornd,freqmm, freqmm_negbin)
+```
+
+The AIC is lower with the random intercept and the negative binomial distribution.
+
+#### Model with monthly rainfall
+
+```{r}
+freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
+summary(freqmm_rain)
+```
+
+```{r}
+ranef(freqmm_rain) %>% dotplot.ranef.mer()
+```
+
+```{r}
+plot(margins::margins(freqmm_rain))
+```
+
+This has similar results to the model with season as a categorical variable.
+
+```{r}
+performance::icc(freqmm_rain)
+```
+
+In this model the contribution of the random effect is small, around 3%.
+
+```{r}
+performance::r2(freqmm_rain)
+```
+
+This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.096.
 
 ### Factors influencing use of logs
 
@@ -190,111 +296,7 @@ plot(m1)
 summary(m1)
 ```
 
-### Frequency of crossing
 
-We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies.
-
-```{r}
-# Calculate weekly frequency
-dat %>% filter(eventcross) %>% 
-  mutate(week = week(DateTime)) %>% count(station,species,week) %>% # group by week of the year
-  ggplot(aes(week,n))+geom_point()
-```
-
-Below I create a database with the number of weekly detection for every station and species
-
-```{r}
-temp <- dat %>% mutate(week = week(DateTime)) %>% 
-  group_by(station) %>% summarise(minw = min(week),maxw=max(week))
-stn_sp_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% 
-  do.call(rbind,.) %>% 
-  full_join(distinct(select(dat, station, species)))
-rm(temp)
-```
-
-```{r}
-# Create database for model
-dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10)%>% filter(eventcross) %>% ungroup() %>% 
-  mutate(week = week(DateTime)) %>% 
-  count(station,species,week) %>% 
-  right_join(stn_sp_weeks) %>% 
-  mutate(n = replace_na(n,0)) %>% 
-  mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% 
-  left_join(rainfall) %>% left_join(log_data_scaled) 
-```
-
-```{r}
-# run model. Mixed effects model of number of detections per week wrt covariates. 
-freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
-summary(freqmm)
-```
-
-The model seems to be zero-inflated. It is recommended to use a negative binomial distribution instead.
-
-```{r}
-performance::check_zeroinflation(freqmm)
-```
-
-```{r}
-freqmm_negbin <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = negative.binomial(1))
-performance::check_zeroinflation(freqmm_negbin)
-```
-
-```{r}
-summary(freqmm_negbin)
-```
-
-```{r}
-margins::margins_summary(freqmm_negbin)
-```
-
-Only three covariates seem to be influencing the frequency of crossing: canopy cover and river depth have a negative influence on crossing frequency, while log length has a positive effect.
-
-```{r}
-plot(margins::margins(freqmm_negbin))
-```
-
-```{r}
-ranef(freqmm) |> dotplot.ranef.mer()
-```
-
-The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
-
-```{r}
-freqmod_nornd <- glm(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth, data = dat_glmm_week_freq, family = poisson())
-AIC(freqmod_nornd,freqmm)
-```
-
-The AIC is lower with the random intercept.
-
-#### Model with monthly rainfall
-
-```{r}
-freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
-summary(freqmm_rain)
-```
-
-```{r}
-ranef(freqmm_rain) %>% dotplot.ranef.mer()
-```
-
-```{r}
-plot(margins::margins(freqmm_rain))
-```
-
-This has similar results to the model with season as a categorical variable.
-
-```{r}
-performance::icc(freqmm_rain)
-```
-
-In this model the contribution of the random effect is small, around 3%.
-
-```{r}
-performance::r2(freqmm_rain)
-```
-
-This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.096.
 
 ### Probability of crossing
 
