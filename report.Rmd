@@ -16,7 +16,6 @@ library(tidyverse)
 library(lubridate)
 library(lme4)
 library(performance)
-library(margins)
 ```
 
 ## Summary
@@ -220,36 +219,47 @@ summary(freqmodels$full_RndIntSsn)
 ```
 
 
-The model seems to be zero-inflated. It is recommended to use a negative binomial distribution instead.
-
-```{r}
-performance::check_zeroinflation(freqmodels$full_RndIntSsn)
-```
-```{r}
-check_model(freqmodels$full_RndIntSsn)
-```
-
-```{r}
-margins::margins_summary(freqmodels$full_RndIntSsn)
-```
 
 ```{r}
 ranef(freqmodels$full_RndIntSsn) |> dotplot.ranef.mer()
 ```
 
-The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
+The random species intercept estimates suggest that pacas and four-eyed opossums have lower baseline activity than the rest of the species, and that tamanduas, common opossums, and coatis have higher than average. The season seems to only affect striped skunks and tamanduas. Their use of logs would increase in rainy season.
 
 ```{r}
-freqmod_nornd <- glm(n ~ Canopy_per + Log_lenght + Diameter + season + Log_to_water +      River_depth, data = dat_glmm_week_freq, family = negative.binomial(1))
-AIC(freqmod_nornd,freqmm, freqmm_negbin)
+check_zeroinflation(freqmodels$full_RndIntSsn)
 ```
 
-The AIC is lower with the random intercept and the negative binomial distribution.
+The model seems to be zero-inflated. It is recommended to use a quasi-Poisson error correction or negative binomial distribution instead.
+
+#### Quasi-Poisson model
+
+```{r}
+freqmodels_nb <- list()
+freqmodels_nb$full_RndIntSsn <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq)
+summary(freqmodels_nb$full_RndIntSsn)
+```
+
+```{r}
+check_model(freqmodels_nb$full_RndIntSsn)
+```
+#### Zero-inflated model
+
+```{r}
+library(glmmTMB)
+zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_freq, family = poisson, ziformula = ~.)
+zifreqmodel2 <- update(zifreqmodel, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
+anova(zifreqmodel, zifreqmodel2)
+```
+The model with only random intercept provides lower AIC than the one with random intercept and slope for season. 
+```{r}
+summary(zifreqmodel2)
+```
 
 #### Model with monthly rainfall
 
 ```{r}
-freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
+freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson)
 summary(freqmm_rain)
 ```
 
