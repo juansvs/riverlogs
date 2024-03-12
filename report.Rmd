@@ -60,8 +60,16 @@ dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 ## Results
 
 ### Effort
+The total effort was 2374 trap-days, the shortest effort was 12 days at a station, and the longest 342 (counting both cameras together).
+
+```{r}
+effortdb <- read.csv("../Data/effort.csv")
+effortdb %>%  group_by(station, camera) %>% summarise(cumeffort = sum(effort)) 
+```
+
 ```{r effort table, echo=FALSE}
 # Table with effort per station
+
 dat_raw %>% filter(!species %in% c("corrupted", "nothing")) %>% group_by(station, camera) %>% summarise(mint = min(DateTime), maxt = max(DateTime),
                                             rng = difftime(max(DateTime),min(DateTime), units = "days")) %>% 
   knitr::kable(caption = "Summary of motion-activated cameras effort", digits = 0, col.names = c("Station","Camera","Start date", "End date", "Effort"))
@@ -71,13 +79,10 @@ dat_raw %>% filter(!DeleteFlag) %>%
   ggplot(aes(DateTime, station))+
   geom_area(data = data.frame(station = "PLOG8", DateTime = strptime(c("2020-05-01","2020-11-30"), format = "%Y-%m-%d")), fill = "lightblue")+
   geom_area(data = data.frame(station = "PLOG8", DateTime = strptime(c("2021-05-01","2021-11-30"), format = "%Y-%m-%d")), fill = "lightblue")+
-  geom_point(aes(color = camera),position = position_dodge(width = 0.5))
+  geom_point(aes(color = camera),position = position_dodge(width = 0.5))+
+  geom_point(aes(color = camera), shape = 2, data = \(x) filter(x,setup), position = position_dodge(width = 0.5))
 ```
-
-```{r}
-filter(dat_raw, !DeleteFlag) %>% 
-  ggplot(aes(DateTime))+geom_density()
-```
+We see that the effort was distributed in two periods. The first was between June and October 2020, all within the rainy season. In 2021, only five stations were deployed again, starting in March 2021. These cameras would have had two months of dry season, and the beginning of the rainy season in May/June. This is important to account for the total effort. I've created a file with the dates for the different periods. 
 
 ### Species observed
 
@@ -123,74 +128,113 @@ dat %>% group_by(species) %>%
 
 We see that the proportion of crossings is mostly consistent across logs for the same species, as seen from the color range observed vertically, with maybe the exception of tayras. This proportion varies mainly across species. The diversity of species at each log is also different. Logs like PLOG05, PLOG06, and PLOG02 detected 15, 14, and 13 species, respectively. PLOG01 and PLOG08 in contrast each recorded only three different species.
 
+### Factors influencing use of logs
+
+We were interested in determining factors that could influence the activity at the log and the probability of crossing. We measured different variables about the log (width, length, height above the water), the river or stream characteristics at that spot (width, depth, flow), and the amount of vegetation (canopy cover). Given the number of covariates, we attempted to reduce it to fewer dimensions by testing for significant correlations among them, and by determining the principal components.
+
+```{r cov correlation, echo=FALSE, fig.cap="Correlation among covariates for logs across rivers in the Osa Wildlife Refuge"}
+covs_cor <- log_data %>% select(-c(1,9,16)) %>% cor()
+covs_cor_p <- log_data %>% select(-c(1,9,16)) %>% corrplot::cor.mtest() 
+corrplot::corrplot(covs_cor,order = "hclust", p.mat = covs_cor_p$p, tl.col = "black", insig = "blank", diag = F, type = "lower", tl.srt = 45)
+```
+
+The covariates were for the most part not strongly correlated to each other. There were some positive correlations between stream width, canopy cover and open percentage. There was also a negative correlation between stream width, canopy cover, and percentage open, and bark. Additionally, stream velocity was positively correlated with log diameter and height above water, and negatively correlated with the velocity of the stream. There are nonetheless many covariates, and it could make sense to reduce the dimensions using a principal components analysis (PCA).
+
+```{r covar pca, echo=FALSE, fig.cap = "Principal component analysis of covariates for logs over rivers in the Osa Wildlife Refuge"}
+pca <- log_data %>% select(2:8,10) %>% prcomp(scale. = T)
+par(mfrow = c(1,2))
+biplot(pca)
+screeplot(pca)
+```
+
+```{r pca summary, echo=FALSE, include=FALSE}
+summary(pca)
+```
+
+It may be hard to summarize the variables in fewer than 3 components. Because of this it makes more sense to keep the original variables, and select covariates to include based on relevance and model fit. Here are the variables that I believe should be relevant:
+
+-   Log diameter
+
+-   Stream width
+
+-   Height above water
+
+-   Seasonality for frequency and probability of crossing
+
+#### Monthly rainfall
+
+Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
+
+|     |     |     |     |     |     |     |     |     |     |     |     |
+|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
+| 77  | 53  | 65  | 141 | 370 | 357 | 373 | 427 | 411 | 627 | 593 | 226 |
+
+```{r}
+rainfall = data.frame(month = 1:12,rain = c(77,53,65,141,370,357,373,427,411,627,593,226))
+rainfall <- mutate(rainfall,rain_sc = scale(rain))
+```
+
 ### Crossing frequency
 
-There were 1096 independent events, so 1096/4885 trap days = 0.224 /day, but this varied across stations, between 0.02 and 1.4 events/day.
+There were 1096 independent events, so 1096/2374 trap days = 0.46 /day, but this varied across stations, between 0.02 and 1.0 events/day.
 
 ```{r}
-dat %>% group_by(station) %>% mutate(stn_effort = as.numeric(max(DateTime)-min(DateTime))) %>% summarize(n = n(), freq = n()/mean(stn_effort),prop = sum(eventcross)/n())
+dat %>% group_by(station) %>% left_join(summarise(effortdb, effort = sum(effort),.by = station)) %>% summarize(n = n(), freq = n()/mean(effort),prop = sum(eventcross)/n())
 ```
 
-We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies.
-
-```{r}
-# Calculate weekly frequency
-dat %>% filter(eventcross) %>% mutate(weekid = ceiling(difftime(DateTime,min(DateTime), units = "week"))) %>% 
-  mutate(week_yr = week(DateTime)) %>% count(station,species,weekid) %>% # group by week of the year
-  ggplot(aes(weekid,n))+geom_point(aes(color = species))
-```
+We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies. The weeks that the camera was working are in a csv file. 
 
 Below I create a database with the number of weekly detection for every station and species
 
 ```{r}
-temp <- dat %>% mutate(yr = year(DateTime), wk = week(DateTime)) %>% distinct(station,yr,wk) %>% 
-  group_split(station) %>% sapply(\(x) data.frame(station = unique(x$station), ))
-mutate(week = min(yr+wk):max(yr+wk))
-  (station) %>% summarise(minw = min(wk+yr),maxw=max(wk+yr))
-stn_sp_weeks <- lapply(1:nrow(temp),\(x) data.frame(station = temp$station[x], week = temp$minw[x]:temp$maxw[x])) %>% 
-  do.call(rbind,.) %>% 
-  full_join(distinct(select(dat, station, species)))
-rm(temp)
+# Find missing weeks. Large gaps are where the cameras was taken down.
+dat %>% mutate(yr = year(DateTime), wk = week(DateTime)) %>% distinct(station,yr,wk) %>% arrange(station,yr,wk) %>% group_by(station) %>% mutate(wdif = lead(wk)-wk) %>% view()
 ```
 
 ```{r}
+weekeffort <- dat %>% group_by(species) %>% filter(n()>10) %>% distinct(station,species) %>% full_join(read.csv("../Data/station_weeks.csv"))
+
 # Create database for model
 dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% ungroup() %>% 
-  mutate(week = week(DateTime)) %>% 
-  count(station,species,week) %>% 
-  right_join(stn_sp_weeks) %>% 
+  mutate(wk = week(DateTime), yr = year(DateTime)) %>% 
+  count(station,species,yr,wk) %>% 
+  right_join(weekeffort) %>% arrange(station,yr,wk) %>% 
   mutate(n = replace_na(n,0)) %>% 
-  mutate(month = week%/%4.3, season = if_else(week>16&week<48, "rainy","dry")) %>% 
+  mutate(month = ceiling(wk/4.3), season = if_else(wk>16&wk<48, "rainy","dry")) %>% 
   left_join(rainfall) %>% left_join(log_data_scaled) 
 ```
+With the database, we can run the models. First I will find the most appropriate random effect structure. The base frequency (intercept) should be related to the species, some are just more abundant than others. Previous studies have also found that seasonality impacts different species differently, so this can also be included as a random effect. For this first step I will include all covariates of interest, i.e. the stream width and depth, log height, log width, log length, and season. The response variable is the number of crossings by species per week. 
+```{r}
+freqmodels <- list()
+# run model. Mixed effects model of number of detections per week wrt covariates. 
+freqmodels$full_RndIntSsn <- glmer(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq, family = poisson)
+freqmodels$full_RndInt <- update(freqmodels$full_RndIntSsn, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
+freqmodels$full_NoRnd <- glm(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season, data = dat_glmm_week_freq, family = poisson)
+
+anova(freqmodels[[1]],freqmodels[[2]], freqmodels[[3]])
+```
+The best structure seems to be the model with both season and species as random effects. In this model, all covariates have a clear effect on the number of detections. There would be fewer crossings for deeper rivers, and more crossings for longer, wider logs higher above the water. 
 
 ```{r}
-# run model. Mixed effects model of number of detections per week wrt covariates. 
-freqmm <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson())
-summary(freqmm)
+summary(freqmodels$full_RndIntSsn)
 ```
+
 
 The model seems to be zero-inflated. It is recommended to use a negative binomial distribution instead.
 
 ```{r}
-performance::check_zeroinflation(freqmm)
+performance::check_zeroinflation(freqmodels$full_RndIntSsn)
+```
+```{r}
+check_model(freqmodels$full_RndIntSsn)
 ```
 
 ```{r}
-freqmm_negbin <- glmer(n ~ Canopy_per+Log_lenght+Diameter+season+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = negative.binomial(1))
-performance::check_zeroinflation(freqmm_negbin)
+margins::margins_summary(freqmodels$full_RndIntSsn)
 ```
 
 ```{r}
-summary(freqmm_negbin)
-```
-
-```{r}
-margins::margins_summary(freqmm_negbin)
-```
-
-```{r}
-ranef(freqmm_negbin) |> dotplot.ranef.mer()
+ranef(freqmodels$full_RndIntSsn) |> dotplot.ranef.mer()
 ```
 
 The random species intercept doesn't seem to have much of an influence on the frequency of crossing, so let's fit another model without the random effect.
@@ -231,51 +275,7 @@ performance::r2(freqmm_rain)
 
 This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.096.
 
-### Factors influencing use of logs
 
-We were interested in determining factors that could influence the activity at the log and the probability of crossing. We measured different variables about the log (width, length, height above the water), the river or stream characteristics at that spot (width, depth, flow), and the amount of vegetation (canopy cover). Given the number of covariates, we attempted to reduce it to fewer dimensions by testing for significant correlations among them, and by determining the principal components.
-
-```{r cov correlation, echo=FALSE, fig.cap="Correlation among covariates for logs across rivers in the Osa Wildlife Refuge"}
-covs_cor <- log_data %>% select(-c(1,9,16)) %>% cor()
-covs_cor_p <- log_data %>% select(-c(1,9,16)) %>% corrplot::cor.mtest() 
-corrplot::corrplot(covs_cor,order = "hclust", p.mat = covs_cor_p$p, tl.col = "black", insig = "blank", diag = F, type = "lower", tl.srt = 45)
-```
-
-The covariates were for the most part not strongly correlated to each other. There were some positive correlations between stream width, canopy cover and open percentage. There was also a negative correlation between stream width, canopy cover, and percentage open, and bark. Additionally, stream velocity was positively correlated with log diameter and height above water, and negatively correlated with the velocity of the stream. There are nonetheless many covariates, and it could make sense to reduce the dimensions using a principal components analysis (PCA).
-
-```{r covar pca, echo=FALSE, fig.cap = "Principal component analysis of covariates for logs over rivers in the Osa Wildlife Refuge"}
-pca <- log_data %>% select(2:8,10) %>% prcomp(scale. = T)
-par(mfrow = c(1,2))
-biplot(pca)
-screeplot(pca)
-```
-
-```{r pca summary, echo=FALSE, include=FALSE}
-summary(pca)
-```
-
-It may be hard to summarize the variables in fewer than 3 components. Because of this it makes more sense to keep the original variables, and select covariates to include based on relevance and model fit. Here are the variables that I believe should be relevant:
-
--   Log diameter
-
--   Stream width
-
--   Height above water
-
--   Seasonality for frequency and probability of crossing
-
-### Monthly rainfall
-
-Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
-
-|     |     |     |     |     |     |     |     |     |     |     |     |
-|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-| 77  | 53  | 65  | 141 | 370 | 357 | 373 | 427 | 411 | 627 | 593 | 226 |
-
-```{r}
-rainfall = data.frame(month = 1:12,rain = c(77,53,65,141,370,357,373,427,411,627,593,226))
-rainfall <- mutate(rainfall,rain_sc = scale(rain))
-```
 
 ### Number of species crossing
 
