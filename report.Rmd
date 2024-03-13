@@ -53,7 +53,7 @@ log_data <- readxl::read_excel("Data/covariates_data_base.xlsx")
 names(log_data)[1] <- "station"
 dat_wcovs <- dat %>% left_join(log_data)
 # scale covariates for model fitting, join with detection data
-log_data_scaled <- mutate(log_data, across(Log_lenght:Vel_conver,scale))
+log_data_scaled <- mutate(log_data, across(Log_lenght:Vel_conver,datawizard::standardise))
 dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 ```
 ## Results
@@ -160,11 +160,8 @@ It may be hard to summarize the variables in fewer than 3 components. Because of
 
 -   Seasonality for frequency and probability of crossing
 
-#### Monthly rainfall
-
 Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
 
-|     |     |     |     |     |     |     |     |     |     |     |     |
 |-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
 | 77  | 53  | 65  | 141 | 370 | 357 | 373 | 427 | 411 | 627 | 593 | 226 |
 
@@ -228,64 +225,59 @@ The random species intercept estimates suggest that pacas and four-eyed opossums
 
 ```{r}
 check_zeroinflation(freqmodels$full_RndIntSsn)
+check_overdispersion(freqmodels$full_RndIntSsn)
 ```
 
-The model seems to be zero-inflated. It is recommended to use a quasi-Poisson error correction or negative binomial distribution instead.
+The model seems to be zero-inflated and overdispersed. It is recommended to use a zero-inflated Poisson or zero-inflated negative binomial distribution instead.
 
-#### Quasi-Poisson model
-
-```{r}
-freqmodels_nb <- list()
-freqmodels_nb$full_RndIntSsn <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq)
-summary(freqmodels_nb$full_RndIntSsn)
-```
-
-```{r}
-check_model(freqmodels_nb$full_RndIntSsn)
-```
 #### Zero-inflated model
+
+First I specify a zero-inflated Poisson mixed model. This model requires specifying a model for the zero-inflation process, i.e. the process linked to additional 0s in the observed data. For simplicity I set this model as a intercept-only model, so the additional 0s will be linked to a constant. This assumes that zero-inflation is uniform across stations and species.
 
 ```{r}
 library(glmmTMB)
-zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_freq, family = poisson, ziformula = ~.)
+zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_freq, family = poisson, ziformula = ~1)
 zifreqmodel2 <- update(zifreqmodel, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
-anova(zifreqmodel, zifreqmodel2)
+AIC(zifreqmodel, zifreqmodel2, freqmodels$full_RndIntSsn)
 ```
-The model with only random intercept provides lower AIC than the one with random intercept and slope for season. 
-```{r}
-summary(zifreqmodel2)
-```
-
-#### Model with monthly rainfall
+There isn't a major difference between including season as a random or as a fixed effect in this model. Both model have a significantly lower AIC than the Poisson model, however.
 
 ```{r}
-freqmm_rain <- glmer(n ~ Canopy_per+Log_lenght+Diameter+rain_sc+Log_to_water+River_depth+(1|species), data = dat_glmm_week_freq, family = poisson)
-summary(freqmm_rain)
+check_zeroinflation(zifreqmodel)
+check_overdispersion(zifreqmodel)
 ```
+This model still has overdispersion and zero-inflation, the ratio of observed to predicted 0s did not change substantially (0.91 vs. 0.92). Here I include covariates in the zero-inflation model. I attempt to include the station or the species as a random effect.
 
 ```{r}
-ranef(freqmm_rain) %>% dotplot.ranef.mer()
+zifreqmodel3 <- update(zifreqmodel, ziformula = ~ (1|station))
+zifreqmodel4 <- update(zifreqmodel, ziformula = ~ (1|species))
+AIC(zifreqmodel,zifreqmodel2, zifreqmodel3, zifreqmodel4)
 ```
+Out of these, the best model according to AIC is the one that includes station as a random effect in the binomial false zero model. 
 
 ```{r}
-plot(margins::margins(freqmm_rain))
+check_zeroinflation(zifreqmodel3)
+check_overdispersion(zifreqmodel3)
 ```
-
-This has similar results to the model with season as a categorical variable.
+This model continues to be overdispersed and zero-inflated. Next let's build the same models with a negative binomial distribution.
 
 ```{r}
-performance::icc(freqmm_rain)
+freqmodel_nb <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq)
+freqmodel_nb2 <- update(freqmodel_nb, ~Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
+zinbfreqmod <- glmmTMB(formula = formula(freqmodel_nb), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
+zinbfreqmod2 <- glmmTMB(formula = formula(freqmodel_nb2), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
+AIC(freqmodel_nb2, freqmodel_nb, zinbfreqmod2, zinbfreqmod)
 ```
-
-In this model the contribution of the random effect is small, around 3%.
+All these models have lower AIC than the ones with a Poisson distribution. Out of them, the best model is the one with zero-inflation, negative binomial distribution, and season as a fixed effect. 
 
 ```{r}
-performance::r2(freqmm_rain)
+check_zeroinflation(zinbfreqmod2)
+check_overdispersion(zinbfreqmod2)
 ```
-
-This model is also not explaining the variation well, the marginal R\^2, corresponding to the fixed effects, is 0.096.
-
-
+This model is not overdispersed but still seems to have excessive 0s. The ratio of zeros is not really that different from 1, even for the model with no zero-inflation. 
+```{r}
+summary(zinbfreqmod2)
+```
 
 ### Number of species crossing
 
