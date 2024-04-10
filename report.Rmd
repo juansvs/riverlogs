@@ -92,19 +92,6 @@ dat %>% count(species, eventcross) %>%
 
 There seem to be some important differences in the probability of crossing across species, some cross nearly every occasion while others rarely do. These observations, however, must be analyzed only for cameras where the same bank is visible.
 
-```{r prop var, echo=FALSE, include=FALSE}
-dat %>% group_by(species) %>%
-  filter(n()>10) %>%
-  count(station, species, eventcross) %>%
-  pivot_wider(names_from = eventcross, values_from = n, values_fill = 0) %>%
-  mutate(prop = `TRUE`/(`TRUE`+`FALSE`)) %>%
-  ggplot(aes(fct_reorder(species, prop),prop))+geom_boxplot()+
-  theme_classic(base_size = 14)+
-  theme(axis.text.x = element_text(hjust = 0, angle = -45),
-        plot.margin = margin(r=12, unit="pt") )+
-  labs(x = "Species", y = "Proportion of log crossings")
-```
-
 ```{r det summary 2, echo=FALSE, fig.cap="Activity and crossing probability for wild vertebrates near logs above rivers in the Osa Wildlife Refuge, Costa Rica"}
 dat %>% group_by(species) %>% 
   filter(n()>10) %>% 
@@ -181,7 +168,7 @@ summary(m1)
 
 ### Crossing frequency
 
-There were 1096 independent events, so 1096/2374 trap days = 0.46 /day, but this varied across stations, between 0.02 and 1.0 events/day.
+There were 1066 independent events, so 1096/2374 trap days = 0.45 /day, but this varied across stations, between 0.05 and 1.1 events/day.
 
 ```{r}
 dat %>% group_by(station) %>% left_join(summarise(effortdb, effort = sum(effort),.by = station)) %>% summarize(n = n(), freq = n()/mean(effort),prop = sum(eventcross)/n())
