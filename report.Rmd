@@ -462,11 +462,14 @@ basecrossprob <- predict(mm3, newdata=data.frame(season=c('rainy',"dry"), Diamet
 
 The baseline probability for all species is high, around 0.75, but it also depends on the species. 
 
+#### Effect of species
+
 ```{r}
 ranef(mm3) |> dotplot.ranef.mer()
 ```
 
-#### Effect of species
+The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, and skunks the base probability of crossing will be higher than the mean effect. Meanwhile, agoutis and pacas, have lower probabilities than the mean. The mean base probability of crossing is 75%. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
+
 
 ```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
 spp <- unique(mm3$frame$species)
@@ -487,84 +490,7 @@ cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>%
   labs(x = "Season", y="Crossing probability", color="Season")
 ```
 
-The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, coatis, and tamanduas, their base probability of crossing will be higher than the mean effect. Meanwhile, curassows, agoutis, and pacas, have lower probabilities than the mean. The mean base probability of crossing is 83%, taking the median values for all the covariates. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
-
 The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 
-
-#### Effect of covariates
-
-```{r margins}
-marfx <- margins::margins(mm1)
-plot(marfx)
-```
-
-```{r}
-summary(marfx)
-```
-
-The probability of crossing increases by 2.3% for an increase in 1 m in the height above the stream. The probability increases by 0.2% for an additional cm in log diameter. An 1 m increase in log length results in a 1.6% increase in probability. An increase of 1% in canopy cover results in an decrease of 3.2% in the probability. Finally, the probability decreases by 2.2% for every additional centimeter of stream depth. The plots below show how these effects would change the average probability of crossing (regardless of species). For all the covariates there is about a 15% increase or decrease in probability across the range of values observed in the study. Nevertheless, the greatest effects are those given by the species.
-
-```{r effect plots, echo=FALSE, fig.cap="Effects of environmental covariates on the probability of crossing logs across rivers"}
-newdata <- data.frame(Log_to_water = seq(min(mm2@frame$Log_to_water), max(mm2@frame$Log_to_water), length.out = 100), 
-           Diameter = mean(mm2@frame$Diameter), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           River_depth = mean(mm2@frame$River_depth))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p1 <- cbind(newdata, ypred) %>% ggplot(aes(Log_to_water, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Height above water (m)", y="Crossing probability (%)")
-newdata <- data.frame(Canopy_per = seq(min(mm2@frame$Canopy_per), max(mm2@frame$Canopy_per), length.out = 100), 
-           Diameter = mean(mm2@frame$Diameter), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           River_depth = mean(mm2@frame$River_depth))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p2 <- cbind(newdata, ypred) %>% ggplot(aes(Canopy_per, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Canopy cover (%)", y="Crossing probability (%)")
-newdata <- data.frame(Diameter = seq(min(mm2@frame$Diameter), max(mm2@frame$Diameter), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           River_depth = mean(mm2@frame$River_depth))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p3 <- cbind(newdata, ypred) %>% ggplot(aes(Diameter, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Log diameter (cm)", y="Crossing probability (%)")
-newdata <- data.frame(River_depth = seq(min(mm2@frame$River_depth), max(mm2@frame$River_depth), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           Diameter = mean(mm2@frame$Diameter))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p4 <- cbind(newdata, ypred) %>% ggplot(aes(River_depth, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "River depth (cm)", y="Crossing probability (%)")
-newdata <- data.frame(Log_lenght = seq(min(mm2@frame$Log_lenght), max(mm2@frame$Log_lenght), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           River_depth = mean(mm2@frame$River_depth), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           Diameter = mean(mm2@frame$Diameter))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p5 <- cbind(newdata, ypred) %>% ggplot(aes(Log_lenght, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Log length (m)", y="Crossing probability (%)")
-cowplot::plot_grid(p1,p3,p5, p2,p4)
-```
-
-```{r}
-margins::margins_summary(mm2) %>% mutate(AME=AME+1)
-```
-
-Export combined figure
-
-```{r combfig}
-library(cowplot)
-png("figures/covar_effects.png",width = 21,height = 9, units = 'cm',res = 300,pointsize = 12,bg = 'white')
-plot_grid(psp,plot_grid(p1,p3,p5, p2,p4, align = 'hv',labels=c('b','c','d','e','f'), label_x = -0.05),rel_widths = c(0.4,0.6), labels = 'a',label_x = -0.05)
-dev.off()
-```
 
 ### Noteworthy behaviors
 
