@@ -41,15 +41,16 @@ dat <- dat_raw %>%
   filter(!species %in% c("nothing", "setup", "corrupted","uid", 
                                       "lizard_uid","iguana_green", "bat", "bird", "horse", 
                                       "people", "dog")) %>% # remove non-animal records
-  group_by(station, species, camera) %>% arrange(DateTime) %>% 
+  group_by(station, species) %>% arrange(station, species, DateTime) %>% 
   mutate(tdif = difftime(DateTime,lag(DateTime),units = "mins")) %>% # time difference between detections
-  mutate(newevent = is.na(tdif) | tdif>duration(5, "minutes")) %>% ungroup() %>% # is the detection a new event?
+  mutate(newevent = is.na(tdif) | tdif>duration(5, "minutes")) %>% # is the detection a new event?
+  ungroup(species) %>% 
   mutate(eventnum = cumsum(newevent)) %>% # label independent events
-  group_by(eventnum) %>% mutate(eventcross = any(crossing)) %>% ungroup() %>% 
+  group_by(station,eventnum) %>% mutate(eventcross = any(crossing)) %>% ungroup() %>% 
   filter(newevent) %>% select(station, species, DateTime, eventcross, behavior)
 
 # Covariates data import and merge with detections
-log_data <- readxl::read_excel("Data/covariates_data_base.xlsx")
+log_data <- readxl::read_excel("../Data/covariates_data_base.xlsx")
 names(log_data)[1] <- "station"
 dat_wcovs <- dat %>% left_join(log_data)
 # scale covariates for model fitting, join with detection data
@@ -66,13 +67,6 @@ effortdb <- read.csv("../Data/effort.csv")
 effortdb %>%  group_by(station, camera) %>% summarise(cumeffort = sum(effort)) 
 ```
 
-```{r effort table, echo=FALSE}
-# Table with effort per station
-
-dat_raw %>% filter(!species %in% c("corrupted", "nothing")) %>% group_by(station, camera) %>% summarise(mint = min(DateTime), maxt = max(DateTime),
-                                            rng = difftime(max(DateTime),min(DateTime), units = "days")) %>% 
-  knitr::kable(caption = "Summary of motion-activated cameras effort", digits = 0, col.names = c("Station","Camera","Start date", "End date", "Effort"))
-```
 ```{r}
 dat_raw %>% filter(!DeleteFlag) %>% 
   ggplot(aes(DateTime, station))+
@@ -96,7 +90,7 @@ dat %>% count(species, eventcross) %>%
   knitr::kable(digits = 1, col.names = c("Species","Detections (n)", "Cross freq. (%)"), caption = "Summary of detections of different species of mammals and birds around logs over rivers")
 ```
 
-There seem to be some important differences in the probability of crossing across species, some cross nearly every occasion while others rarely do. 
+There seem to be some important differences in the probability of crossing across species, some cross nearly every occasion while others rarely do. These observations, however, must be analyzed only for cameras where the same bank is visible.
 
 ```{r prop var, echo=FALSE, include=FALSE}
 dat %>% group_by(species) %>%
@@ -162,121 +156,9 @@ It may be hard to summarize the variables in fewer than 3 components. Because of
 
 Below is the average montly precipitation in Pto. Jimenez, which we can use as a continuous variable instead of the season.
 
-|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|-----|
-| 77  | 53  | 65  | 141 | 370 | 357 | 373 | 427 | 411 | 627 | 593 | 226 |
-
 ```{r}
 rainfall = data.frame(month = 1:12,rain = c(77,53,65,141,370,357,373,427,411,627,593,226))
 rainfall <- mutate(rainfall,rain_sc = scale(rain))
-```
-
-### Crossing frequency
-
-There were 1096 independent events, so 1096/2374 trap days = 0.46 /day, but this varied across stations, between 0.02 and 1.0 events/day.
-
-```{r}
-dat %>% group_by(station) %>% left_join(summarise(effortdb, effort = sum(effort),.by = station)) %>% summarize(n = n(), freq = n()/mean(effort),prop = sum(eventcross)/n())
-```
-
-We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies. The weeks that the camera was working are in a csv file. 
-
-Below I create a database with the number of weekly detection for every station and species
-
-```{r}
-# Find missing weeks. Large gaps are where the cameras was taken down.
-dat %>% mutate(yr = year(DateTime), wk = week(DateTime)) %>% distinct(station,yr,wk) %>% arrange(station,yr,wk) %>% group_by(station) %>% mutate(wdif = lead(wk)-wk) %>% view()
-```
-
-```{r}
-weekeffort <- dat %>% group_by(species) %>% filter(n()>10) %>% distinct(station,species) %>% full_join(read.csv("../Data/station_weeks.csv"))
-
-# Create database for model
-dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% ungroup() %>% 
-  mutate(wk = week(DateTime), yr = year(DateTime)) %>% 
-  count(station,species,yr,wk) %>% 
-  right_join(weekeffort) %>% arrange(station,yr,wk) %>% 
-  mutate(n = replace_na(n,0)) %>% 
-  mutate(month = ceiling(wk/4.3), season = if_else(wk>16&wk<48, "rainy","dry")) %>% 
-  left_join(rainfall) %>% left_join(log_data_scaled) 
-```
-With the database, we can run the models. First I will find the most appropriate random effect structure. The base frequency (intercept) should be related to the species, some are just more abundant than others. Previous studies have also found that seasonality impacts different species differently, so this can also be included as a random effect. For this first step I will include all covariates of interest, i.e. the stream width and depth, log height, log width, log length, and season. The response variable is the number of crossings by species per week. 
-```{r}
-freqmodels <- list()
-# run model. Mixed effects model of number of detections per week wrt covariates. 
-freqmodels$full_RndIntSsn <- glmer(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq, family = poisson)
-freqmodels$full_RndInt <- update(freqmodels$full_RndIntSsn, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
-freqmodels$full_NoRnd <- glm(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season, data = dat_glmm_week_freq, family = poisson)
-
-anova(freqmodels[[1]],freqmodels[[2]], freqmodels[[3]])
-```
-The best structure seems to be the model with both season and species as random effects. In this model, all covariates have a clear effect on the number of detections. There would be fewer crossings for deeper rivers, and more crossings for longer, wider logs higher above the water. 
-
-```{r}
-summary(freqmodels$full_RndIntSsn)
-```
-
-
-
-```{r}
-ranef(freqmodels$full_RndIntSsn) |> dotplot.ranef.mer()
-```
-
-The random species intercept estimates suggest that pacas and four-eyed opossums have lower baseline activity than the rest of the species, and that tamanduas, common opossums, and coatis have higher than average. The season seems to only affect striped skunks and tamanduas. Their use of logs would increase in rainy season.
-
-```{r}
-check_zeroinflation(freqmodels$full_RndIntSsn)
-check_overdispersion(freqmodels$full_RndIntSsn)
-```
-
-The model seems to be zero-inflated and overdispersed. It is recommended to use a zero-inflated Poisson or zero-inflated negative binomial distribution instead.
-
-#### Zero-inflated model
-
-First I specify a zero-inflated Poisson mixed model. This model requires specifying a model for the zero-inflation process, i.e. the process linked to additional 0s in the observed data. For simplicity I set this model as a intercept-only model, so the additional 0s will be linked to a constant. This assumes that zero-inflation is uniform across stations and species.
-
-```{r}
-library(glmmTMB)
-zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_freq, family = poisson, ziformula = ~1)
-zifreqmodel2 <- update(zifreqmodel, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
-AIC(zifreqmodel, zifreqmodel2, freqmodels$full_RndIntSsn)
-```
-There isn't a major difference between including season as a random or as a fixed effect in this model. Both model have a significantly lower AIC than the Poisson model, however.
-
-```{r}
-check_zeroinflation(zifreqmodel)
-check_overdispersion(zifreqmodel)
-```
-This model still has overdispersion and zero-inflation, the ratio of observed to predicted 0s did not change substantially (0.91 vs. 0.92). Here I include covariates in the zero-inflation model. I attempt to include the station or the species as a random effect.
-
-```{r}
-zifreqmodel3 <- update(zifreqmodel, ziformula = ~ (1|station))
-zifreqmodel4 <- update(zifreqmodel, ziformula = ~ (1|species))
-AIC(zifreqmodel,zifreqmodel2, zifreqmodel3, zifreqmodel4)
-```
-Out of these, the best model according to AIC is the one that includes station as a random effect in the binomial false zero model. 
-
-```{r}
-check_zeroinflation(zifreqmodel3)
-check_overdispersion(zifreqmodel3)
-```
-This model continues to be overdispersed and zero-inflated. Next let's build the same models with a negative binomial distribution.
-
-```{r}
-freqmodel_nb <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+(1+season|species), data = dat_glmm_week_freq)
-freqmodel_nb2 <- update(freqmodel_nb, ~Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
-zinbfreqmod <- glmmTMB(formula = formula(freqmodel_nb), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
-zinbfreqmod2 <- glmmTMB(formula = formula(freqmodel_nb2), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
-AIC(freqmodel_nb2, freqmodel_nb, zinbfreqmod2, zinbfreqmod)
-```
-All these models have lower AIC than the ones with a Poisson distribution. Out of them, the best model is the one with zero-inflation, negative binomial distribution, and season as a fixed effect. 
-
-```{r}
-check_zeroinflation(zinbfreqmod2)
-check_overdispersion(zinbfreqmod2)
-```
-This model is not overdispersed but still seems to have excessive 0s. The ratio of zeros is not really that different from 1, even for the model with no zero-inflation. 
-```{r}
-summary(zinbfreqmod2)
 ```
 
 ### Number of species crossing
@@ -297,9 +179,228 @@ summary(m1)
 
 
 
+### Crossing frequency
+
+There were 1096 independent events, so 1096/2374 trap days = 0.46 /day, but this varied across stations, between 0.02 and 1.0 events/day.
+
+```{r}
+dat %>% group_by(station) %>% left_join(summarise(effortdb, effort = sum(effort),.by = station)) %>% summarize(n = n(), freq = n()/mean(effort),prop = sum(eventcross)/n())
+```
+
+We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies. The weeks that the camera was working are in a csv file. 
+
+Below I create a database with the number of weekly detection for every station and species
+
+```{r}
+# Find missing weeks. Large gaps are where the cameras was taken down.
+dat %>% mutate(yr = year(DateTime), wk = week(DateTime)) %>% distinct(station,yr,wk) %>% arrange(station,yr,wk) %>% group_by(station) %>% mutate(wdif = lead(wk)-wk) %>% view()
+```
+
+```{r}
+weekeffort <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% distinct(station,species) %>% full_join(read.csv("../Data/station_weeks.csv"))
+
+# Create database for model
+dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% ungroup() %>% 
+  mutate(wk = week(DateTime), yr = year(DateTime)) %>% 
+  count(station,species,yr,wk) %>% 
+  right_join(weekeffort) %>% arrange(station,yr,wk) %>% 
+  mutate(n = replace_na(n,0)) %>% 
+  mutate(month = ceiling(wk/4.3), season = if_else(wk>16&wk<48, "rainy","dry")) %>% 
+  left_join(rainfall) %>% left_join(log_data_scaled) 
+```
+With the database, we can run the models. First I will find the most appropriate random effect structure. The base frequency (intercept) should be related to the species, some are just more abundant than others. Previous studies have also found that seasonality impacts different species differently, so this can also be included as a random effect. For this first step I will include all covariates of interest, i.e. the stream width and depth, log height, log width, log length, and season. The response variable is the number of crossings by species per week. 
+```{r}
+freqmodels <- list()
+# run model. Mixed effects model of number of detections per week wrt covariates. 
+freqmodels$full_RndIntSsn <- glmer(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1+season|species), data = dat_glmm_week_freq, family = poisson)
+freqmodels$full_RndInt <- update(freqmodels$full_RndIntSsn, ~ Log_lenght+Diameter+Log_to_water+River_depth+season+(1|species))
+freqmodels$full_NoRnd <- glm(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season, data = dat_glmm_week_freq, family = poisson)
+
+AIC(freqmodels[[1]],freqmodels[[2]], freqmodels[[3]])
+```
+The best structure seems to be the model with both season and species as random effects. In this model, all covariates have a clear effect on the number of detections. There would be fewer crossings for deeper rivers, and more crossings for longer, wider logs higher above the water. 
+
+```{r}
+summary(freqmodels$full_RndIntSsn)
+```
+
+
+
+```{r}
+ranef(freqmodels$full_RndIntSsn) |> dotplot.ranef.mer()
+```
+
+The random species intercept estimates suggest that four-eyed opossums have lower baseline activity than the rest of the species, and that common opossums and coatis have higher than average. The season seems to only affect curassows and coatis. Their use of logs would decrease in rainy season.
+
+```{r}
+check_zeroinflation(freqmodels$full_RndIntSsn)
+check_overdispersion(freqmodels$full_RndIntSsn)
+```
+
+The model seems to be zero-inflated and overdispersed. It is recommended to use a zero-inflated Poisson or zero-inflated negative binomial distribution instead.
+
+#### Zero-inflated model
+
+First I specify a zero-inflated Poisson mixed model. This model requires specifying a model for the zero-inflation process, i.e. the process linked to additional 0s in the observed data. For simplicity I set this model as a intercept-only model, so the additional 0s will be linked to a constant. This assumes that zero-inflation is uniform across stations and species.
+
+```{r}
+library(glmmTMB)
+zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_freq, family = poisson, ziformula = ~1)
+zifreqmodel2 <- update(zifreqmodel, ~.-(1+season|species)+(1|species))
+AIC(zifreqmodel, zifreqmodel2, freqmodels$full_RndIntSsn)
+```
+The best model in this case is the one with both random effects (intercept and season). Both zero-inflated models have a significantly lower AIC than the Poisson model
+
+```{r}
+check_zeroinflation(zifreqmodel)
+check_overdispersion(zifreqmodel)
+```
+This model still has overdispersion and zero-inflation. Here I include covariates in the zero-inflation model. I attempt to include the station or the species as a random effect.
+
+```{r}
+zifreqmodel3 <- update(zifreqmodel, ziformula = ~ (1|station))
+zifreqmodel4 <- update(zifreqmodel, ziformula = ~ (1|species))
+AIC(zifreqmodel,zifreqmodel2, zifreqmodel3, zifreqmodel4)
+```
+Out of these, the best model according to AIC is the one that includes station as a random effect in the binomial false zero model. 
+
+```{r}
+check_zeroinflation(zifreqmodel3)
+check_overdispersion(zifreqmodel3)
+```
+This model continues to be overdispersed and zero-inflated. Next let's build the same zero-inflated models with a negative binomial distribution instead of Poisson.
+
+```{r}
+freqmodel_nb <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1+season|species), data = dat_glmm_week_freq)
+freqmodel_nb2 <- update(freqmodel_nb, ~Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1|species))
+zinbfreqmod <- glmmTMB(formula = formula(freqmodel_nb), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
+zinbfreqmod2 <- glmmTMB(formula = formula(freqmodel_nb2), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
+AIC(freqmodel_nb2, freqmodel_nb, zinbfreqmod2, zinbfreqmod)
+```
+All these models have lower AIC than the ones with a Poisson distribution. Out of them, the best model is the one with negative binomial distribution and season as a fixed effect. 
+
+```{r}
+check_zeroinflation(freqmodel_nb2)
+check_overdispersion(freqmodel_nb2)
+```
+This model is still overdispersed but not zero-inflated.  
+```{r}
+bestfreqmod <- freqmodel_nb2
+summary(bestfreqmod)
+```
+SOOOO, THE FINAL DECISION (MAYBE). I fit a negative binomial mixed effects model with the number of detections as a response variable. I included a random intercept and random slope variable for the effect of season for each species. I included the log length, log width, height above water, stream width, and stream depth as fixed effects. 
+
+
+```{r}
+predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = 'dry'), type='response', se.fit = T)
+```
+```{r}
+icc(freqmodel_nb2)
+```
+The ICC of 0.12 indicates some small correlation within species, so it may not be necessary to include the random effect.
+
+#### Plot
+```{r}
+mumean <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="dry", Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
+as.data.frame(ranef(bestfreqmod)) %>% 
+  mutate(int = fixef(bestfreqmod)[1]) %>% 
+  mutate(est = exp(condval+int)/(1+exp(condval+int)),
+         hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
+         lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
+  # mutate(sp = fct_relabel(grp, )) %>% 
+    left_join(read.csv("../Data/spnames.csv"), by = join_by(grp==species)) %>% 
+  ggplot(aes(fct_reorder(plotname, est),est)) +
+  geom_hline(yintercept = mumean, linetype=2) +
+        geom_point() + 
+        geom_errorbar(aes(ymin=lo,
+                           ymax=hi), width=0)+
+  theme_classic(base_size = 14)+
+  labs(x = "Species", y = "Log use (crossings/week)")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = -35, hjust = 0),
+        plot.margin = unit(c(1,5,1,1), "mm"), 
+        aspect.ratio = 0.9,
+        panel.border = element_rect(fill=NA))
+
+
+
+basefreqpred <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="rainy", Log_to_water=0, River_depth=0, Diameter=0, species=unique(dat_glmm_week_freq$species)), type = "response")
+pfreqs <- data.frame(freq = basefreqpred$fit, se = basefreqpred$se.fit, species = unique(dat_glmm_week_freq$species)) %>% 
+  left_join(read.csv("../Data/spnames.csv")) %>% 
+  ggplot()+
+  geom_hline(yintercept = mumean, lty=2)+
+  geom_hline(yintercept = 0)+
+  geom_pointrange(aes(y=freq, ymin = freq-2*se, ymax=freq+2*se, x=fct_reorder(plotname, freq)))+
+  labs(x = "Species", y = "Log use (crossings/week)")+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = -35, hjust = 0),
+        plot.margin = unit(c(1,5,1,1), "mm"), 
+        aspect.ratio = 0.9,
+        panel.border = element_rect(fill=NA))
+pfreqs
+```
+
+```{r}
+og_vars_meansd <- cbind(apply(select(log_data, where(is.numeric)), 2, mean),
+                        apply(select(log_data, where(is.numeric)), 2, sd))
+pspnewdata <- data.frame(Log_to_water = seq(min(mod$frame$Log_to_water),
+                                            max(mod$frame$Log_to_water),
+                                            length.out = 100), 
+           Diameter = 0, 
+           Log_lenght = 0, 
+           Stream_width = 0, 
+           River_depth = 0,
+           season = "rainy") %>% 
+  mutate(Log_to_water_og = og_vars_meansd["Log_to_water",1]+og_vars_meansd["Log_to_water",2]+Log_to_water)
+ypred <- predict.glmmTMB(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+p1 <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_to_water_og, mu))+
+  geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
+  geom_line()+
+  theme_classic(base_size = 12)+
+  labs(x = "Height above water (m)", y="Crossing frequency (/week)")
+newdata <- data.frame(Canopy_per = seq(min(mm2@frame$Canopy_per), max(mm2@frame$Canopy_per), length.out = 100), 
+           Diameter = mean(mm2@frame$Diameter), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           River_depth = mean(mm2@frame$River_depth))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p2 <- cbind(newdata, ypred) %>% ggplot(aes(Canopy_per, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Canopy cover (%)", y="Crossing probability (%)")
+newdata <- data.frame(Diameter = seq(min(mm2@frame$Diameter), max(mm2@frame$Diameter), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           River_depth = mean(mm2@frame$River_depth))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p3 <- cbind(newdata, ypred) %>% ggplot(aes(Diameter, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Log diameter (cm)", y="Crossing probability (%)")
+newdata <- data.frame(River_depth = seq(min(mm2@frame$River_depth), max(mm2@frame$River_depth), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           Log_lenght = mean(mm2@frame$Log_lenght), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           Diameter = mean(mm2@frame$Diameter))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p4 <- cbind(newdata, ypred) %>% ggplot(aes(River_depth, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "River depth (cm)", y="Crossing probability (%)")
+newdata <- data.frame(Log_lenght = seq(min(mm2@frame$Log_lenght), max(mm2@frame$Log_lenght), length.out = 100), 
+           Canopy_per = mean(mm2@frame$Canopy_per), 
+           River_depth = mean(mm2@frame$River_depth), 
+           Log_to_water = mean(mm2@frame$Log_to_water), 
+           Diameter = mean(mm2@frame$Diameter))
+ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
+p5 <- cbind(newdata, ypred) %>% ggplot(aes(Log_lenght, 100*ypred))+geom_line()+
+  lims(y = c(0,100))+theme_classic(base_size = 12)+
+  labs(x = "Log length (m)", y="Crossing probability (%)")
+cowplot::plot_grid(p1,p3,p5, p2,p4)
+```
+
+
 ### Probability of crossing
 
-To analyze how the probability of crossing is influenced by different covariates, we used a binomial generalized linear model (GLM), where the response variable was whether the animal crossed or not for every observation, and with some selected covariates as predictors. In addition to the variables seen previously, I will also include the season, as rain will have significant effects on water level and flow. For one, the rain affects the water level, some streams will become easier to pass, rendering the logs unnecessary. Secondly, animals change their activity ranges in rainy and dry seasons, so there may be differences in overall activity near the streams. There are some clear differences between the species in their behavior and whether they tend to cross logs or not. We include a random effect of species to account for these differences. For this model, we include only species that had 10 or more records over the study period.
+To analyze how the probability of crossing is influenced by different covariates, we used a binomial generalized linear model (GLM), where the response variable was whether the animal crossed or not for every observation, and with some selected covariates as predictors. In addition to the variables seen previously, I will also include the season, as rain will have significant effects on water level and flow. For one, the rain affects the water level, some streams will become easier to pass, rendering the logs unnecessary. Secondly, animals change their activity ranges in rainy and dry seasons, so there may be differences in overall activity near the streams. There are some clear differences between the species in their behavior and whether they tend to cross logs or not. We include a random effect of species to account for these differences. For this model, we include only species that had 10 or more records over the study period. In this analysis we only use cameras were you can see enough of the proximate bank to detect animals that do not cross. Most cameras were directed towards the middle of the log, so they would only be triggered once an animal was on the log.
 
 ```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
 library(lme4)
