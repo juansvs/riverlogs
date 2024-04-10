@@ -179,11 +179,6 @@ We analyze the number of animals seen crossing. For this, we divide the detectio
 Below I create a database with the number of weekly detection for every station and species
 
 ```{r}
-# Find missing weeks. Large gaps are where the cameras was taken down.
-dat %>% mutate(yr = year(DateTime), wk = week(DateTime)) %>% distinct(station,yr,wk) %>% arrange(station,yr,wk) %>% group_by(station) %>% mutate(wdif = lead(wk)-wk) %>% view()
-```
-
-```{r}
 weekeffort <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% distinct(station,species) %>% full_join(read.csv("../Data/station_weeks.csv"))
 
 # Create database for model
@@ -258,7 +253,7 @@ check_overdispersion(zifreqmodel3)
 This model continues to be overdispersed and zero-inflated. Next let's build the same zero-inflated models with a negative binomial distribution instead of Poisson.
 
 ```{r}
-freqmodel_nb <- glmer.nb(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1+season|species), data = dat_glmm_week_freq)
+freqmodel_nb <- glmmTMB(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1+season|species), data = dat_glmm_week_freq, family = nbinom1)
 freqmodel_nb2 <- update(freqmodel_nb, ~Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1|species))
 zinbfreqmod <- glmmTMB(formula = formula(freqmodel_nb), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
 zinbfreqmod2 <- glmmTMB(formula = formula(freqmodel_nb2), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
@@ -275,22 +270,22 @@ This model is still overdispersed but not zero-inflated.
 bestfreqmod <- freqmodel_nb2
 summary(bestfreqmod)
 ```
-SOOOO, THE FINAL DECISION (MAYBE). I fit a negative binomial mixed effects model with the number of detections as a response variable. I included a random intercept and random slope variable for the effect of season for each species. I included the log length, log width, height above water, stream width, and stream depth as fixed effects. 
+SOOOO, THE FINAL DECISION (MAYBE). I fit a negative binomial mixed effects model with the number of detections as a response variable. I included a random intercept species.  I included the log length, log width, height above water, stream width, stream depth, and season as fixed effects. 
 
 
 ```{r}
-predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = 'dry'), type='response', se.fit = T)
+predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = 'dry'), type='response', se.fit = T, re.form = NA)
 ```
 ```{r}
-icc(freqmodel_nb2)
+icc(bestfreqmod)
 ```
-The ICC of 0.12 indicates some small correlation within species, so it may not be necessary to include the random effect.
+The ICC of 0.10 indicates some small correlation within species, so it may not be necessary to include the random effect.
 
 #### Plot
 ```{r}
 mumean <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="dry", Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
 as.data.frame(ranef(bestfreqmod)) %>% 
-  mutate(int = fixef(bestfreqmod)[1]) %>% 
+  mutate(int = fixef(bestfreqmod)[[1]][1]) %>% 
   mutate(est = exp(condval+int)/(1+exp(condval+int)),
          hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
          lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
@@ -302,7 +297,7 @@ as.data.frame(ranef(bestfreqmod)) %>%
         geom_errorbar(aes(ymin=lo,
                            ymax=hi), width=0)+
   theme_classic(base_size = 14)+
-  labs(x = "Species", y = "Log use (crossings/week)")+
+  labs(x = "Species", y = "Use frequency (crossings/week)")+
   theme_classic()+
   theme(axis.text.x = element_text(angle = -35, hjust = 0),
         plot.margin = unit(c(1,5,1,1), "mm"), 
@@ -311,18 +306,17 @@ as.data.frame(ranef(bestfreqmod)) %>%
 
 
 
-basefreqpred <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="rainy", Log_to_water=0, River_depth=0, Diameter=0, species=unique(dat_glmm_week_freq$species)), type = "response")
+basefreqpred <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="rainy", Log_to_water=0, River_depth=0, Diameter=0, species=unique(dat_glmm_week_freq$species)), type = "response", se.fit = T)
 pfreqs <- data.frame(freq = basefreqpred$fit, se = basefreqpred$se.fit, species = unique(dat_glmm_week_freq$species)) %>% 
   left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot()+
   geom_hline(yintercept = mumean, lty=2)+
   geom_hline(yintercept = 0)+
   geom_pointrange(aes(y=freq, ymin = freq-2*se, ymax=freq+2*se, x=fct_reorder(plotname, freq)))+
-  labs(x = "Species", y = "Log use (crossings/week)")+
+  labs(x = "Species", y = "Use frequency (crossings/week)")+
   theme_classic()+
-  theme(axis.text.x = element_text(angle = -35, hjust = 0),
+  theme(axis.text.x = element_text(angle = -45, hjust = 0),
         plot.margin = unit(c(1,5,1,1), "mm"), 
-        aspect.ratio = 0.9,
         panel.border = element_rect(fill=NA))
 pfreqs
 ```
@@ -330,60 +324,98 @@ pfreqs
 ```{r}
 og_vars_meansd <- cbind(apply(select(log_data, where(is.numeric)), 2, mean),
                         apply(select(log_data, where(is.numeric)), 2, sd))
-pspnewdata <- data.frame(Log_to_water = seq(min(mod$frame$Log_to_water),
-                                            max(mod$frame$Log_to_water),
+pspnewdata <- data.frame(Log_to_water = seq(min(bestfreqmod$frame$Log_to_water),
+                                            max(bestfreqmod$frame$Log_to_water),
                                             length.out = 100), 
            Diameter = 0, 
            Log_lenght = 0, 
            Stream_width = 0, 
            River_depth = 0,
            season = "rainy") %>% 
-  mutate(Log_to_water_og = og_vars_meansd["Log_to_water",1]+og_vars_meansd["Log_to_water",2]+Log_to_water)
-ypred <- predict.glmmTMB(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
-p1 <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_to_water_og, mu))+
+  mutate(Log_to_water_og = og_vars_meansd["Log_to_water",1]+og_vars_meansd["Log_to_water",2]*Log_to_water)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+pht <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_to_water_og, mu))+
   geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "Height above water (m)", y="Crossing frequency (/week)")
-newdata <- data.frame(Canopy_per = seq(min(mm2@frame$Canopy_per), max(mm2@frame$Canopy_per), length.out = 100), 
-           Diameter = mean(mm2@frame$Diameter), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           River_depth = mean(mm2@frame$River_depth))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p2 <- cbind(newdata, ypred) %>% ggplot(aes(Canopy_per, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Canopy cover (%)", y="Crossing probability (%)")
-newdata <- data.frame(Diameter = seq(min(mm2@frame$Diameter), max(mm2@frame$Diameter), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           River_depth = mean(mm2@frame$River_depth))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p3 <- cbind(newdata, ypred) %>% ggplot(aes(Diameter, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Log diameter (cm)", y="Crossing probability (%)")
-newdata <- data.frame(River_depth = seq(min(mm2@frame$River_depth), max(mm2@frame$River_depth), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           Log_lenght = mean(mm2@frame$Log_lenght), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           Diameter = mean(mm2@frame$Diameter))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p4 <- cbind(newdata, ypred) %>% ggplot(aes(River_depth, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "River depth (cm)", y="Crossing probability (%)")
-newdata <- data.frame(Log_lenght = seq(min(mm2@frame$Log_lenght), max(mm2@frame$Log_lenght), length.out = 100), 
-           Canopy_per = mean(mm2@frame$Canopy_per), 
-           River_depth = mean(mm2@frame$River_depth), 
-           Log_to_water = mean(mm2@frame$Log_to_water), 
-           Diameter = mean(mm2@frame$Diameter))
-ypred <- predict(mm2, type = "response", newdata = newdata, re.form = NA) 
-p5 <- cbind(newdata, ypred) %>% ggplot(aes(Log_lenght, 100*ypred))+geom_line()+
-  lims(y = c(0,100))+theme_classic(base_size = 12)+
-  labs(x = "Log length (m)", y="Crossing probability (%)")
-cowplot::plot_grid(p1,p3,p5, p2,p4)
+pspnewdata <- data.frame(Log_lenght = seq(min(bestfreqmod$frame$Log_lenght),
+                                            max(bestfreqmod$frame$Log_lenght),
+                                            length.out = 100), 
+           Diameter = 0, 
+           Log_to_water = 0, 
+           Stream_width = 0, 
+           River_depth = 0,
+           season = "rainy") %>% 
+  mutate(Log_lenght_og = og_vars_meansd["Log_lenght",1]+og_vars_meansd["Log_lenght",2]*Log_lenght)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+plen <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_lenght_og, mu))+
+  geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
+  geom_line()+
+  theme_classic(base_size = 12)+
+  labs(x = "Log length (m)", y="Crossing frequency (/week)")
+pspnewdata <- data.frame(Diameter = seq(min(mod$frame$Diameter),
+                                            max(mod$frame$Diameter),
+                                            length.out = 100), 
+           Log_to_water=0,
+           Log_lenght = 0, 
+           Stream_width = 0, 
+           River_depth = 0,
+           season = "rainy") %>% 
+  mutate(Diameter_og = og_vars_meansd["Diameter",1]+og_vars_meansd["Diameter",2]*Diameter)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+pwid <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Diameter_og, mu))+
+  geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
+  geom_line()+
+  theme_classic(base_size = 12)+
+  labs(x = "Log width (cm)", y="Crossing frequency (/week)")
+pspnewdata <- data.frame(River_depth = seq(min(mod$frame$River_depth),
+                                            max(mod$frame$River_depth),
+                                            length.out = 100), 
+           Log_to_water = 0,
+           Diameter = 0, 
+           Log_lenght = 0, 
+           Stream_width = 0, 
+           season = "rainy") %>% 
+  mutate(River_depth_og = og_vars_meansd["River_depth",1]+og_vars_meansd["River_depth",2]*River_depth)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+pdep <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(River_depth_og, mu))+
+  geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
+  geom_line()+
+  theme_classic(base_size = 12)+
+  labs(x = "River depth (cm)", y="Crossing frequency (/week)")
+pspnewdata <- data.frame(Stream_width = seq(min(mod$frame$Stream_width),
+                                            max(mod$frame$Stream_width),
+                                            length.out = 100), 
+           Log_to_water = 0,
+           Diameter = 0, 
+           Log_lenght = 0, 
+           River_depth = 0, 
+           season = "rainy") %>% 
+  mutate(Stream_width_og = og_vars_meansd["Stream_width",1]+og_vars_meansd["Stream_width",2]*Stream_width)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+prwid <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Stream_width_og, mu))+
+  geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
+  geom_line()+
+  theme_classic(base_size = 12)+
+  labs(x = "River width (m)", y="Crossing frequency (/week)")
+pspnewdata <- data.frame(
+  River_depth = 0, 
+           Log_to_water = 0,
+           Diameter = 0, 
+           Log_lenght = 0, 
+           Stream_width = 0, 
+           season = c("rainy","dry")
+)
+ypred <- predict(bestfreqmod, type = "response", newdata = pspnewdata, se.fit = T, re.form = NA) 
+pses <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
+  ggplot(aes(season, mu))+
+  geom_pointrange(aes(ymin = mu-se, ymax = mu+se))+
+  theme_classic(base_size = 12)+
+  scale_x_discrete(labels = c("Dry","Rainy"))+
+  labs(x = "Season", y="Crossing frequency (/week)")
+cowplot::plot_grid(pfreqs,plot_grid(plen,pwid,pht,pdep,prwid,pses, align = 'hv', labels = 'auto'))
 ```
-
 
 ### Probability of crossing
 
@@ -392,28 +424,26 @@ To analyze how the probability of crossing is influenced by different covariates
 ```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
 library(lme4)
 # Add the season to the database
-dat_wcovs_scaled <- dat_wcovs %>% mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall)
 # filter to keep only species with more than 10 records
-dat_glmm <- dat_wcovs_scaled %>% group_by(species) %>% filter(n()>10) %>% ungroup() %>% mutate(month = month(DateTime)) %>% left_join(rainfall) %>% mutate(season = if_else(month>4 & month<12, "rainy","dry"), rain = scale(rain))
+dat_glmm <- dat_wcovs_scaled %>% filter(station %in% c("CLOG03", "CLOG07", "CLOG08", "CLOG09", "PLOG02", "PLOG04")) %>% # only keep stations overlooking the near bank
+  mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall) %>% 
+  group_by(species) %>% filter(n()>10) %>% ungroup()
 # Build model with season as a covariate, a random effect of species, and multiple covariates
-mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+rain+(1|species), data=dat_glmm, family = "binomial")
+mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+season+(1|species), data=dat_glmm, family = "binomial")
 # model without season or rain
 mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
 #compare the two
 AIC(mm1,mm2)
 ```
 
-The second model, without season, performs better than the one with. The difference in AIC is less than 2, so the mothers are actually comparable.
+The first model, with season, performs better than the one without.
 
 ```{r}
 performance::check_model(mm1)
 ```
 
-The model performs reasonably well, although there is some underestimation around the edges and overestimation around the middle. We fit multiple models with different combinations of the covariates. The best model, according to the AIC, is one that includes the height, diameter and length of the log, as well as the river depth and canopy cover, but not the season. All the covariates, except for river depth, increased the probability of crossing the log. In other words, longer and wider logs, higher above the stream, and more covered are more likely to be crossed, while logs above deeper streams are less likely to be crossed.
+The model performe quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables.
 
-```{r mm summary, echo=FALSE, include=FALSE}
-summary(mm1)
-```
 
 #### Baseline crossing probability
 
