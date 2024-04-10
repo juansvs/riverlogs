@@ -414,7 +414,7 @@ pses <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>%
   theme_classic(base_size = 12)+
   scale_x_discrete(labels = c("Dry","Rainy"))+
   labs(x = "Season", y="Crossing frequency (/week)")
-cowplot::plot_grid(pfreqs,plot_grid(plen,pwid,pht,pdep,prwid,pses, align = 'hv', labels = 'auto'))
+plot_grid(pfreqs,plot_grid(plen,pwid,pht,pdep,prwid,pses, align = 'hv', labels = 'auto'))
 ```
 
 ### Probability of crossing
@@ -431,7 +431,7 @@ dat_glmm <- dat_wcovs_scaled %>% filter(station %in% c("CLOG03", "CLOG07", "CLOG
 # Build model with season as a covariate, a random effect of species, and multiple covariates
 mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+season+(1|species), data=dat_glmm, family = "binomial")
 # model without season or rain
-mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Canopy_per+River_depth+(1|species), data=dat_glmm, family = "binomial")
+mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+(1|species), data=dat_glmm, family = "binomial")
 #compare the two
 AIC(mm1,mm2)
 ```
@@ -442,45 +442,54 @@ The first model, with season, performs better than the one without.
 performance::check_model(mm1)
 ```
 
-The model performe quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables.
+The model performs quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables.
 
+```{r}
+mm3 <- glmmTMB(eventcross~Diameter+season+(1|species), data=dat_glmm, family = "binomial")
+check_model(mm3)
+```
+
+```{r}
+summary(mm3)
+```
+The best performing model is the one with only Diameter and season, and only season has a significant effect. The likelihood of crossing is higher during the rainy season.
 
 #### Baseline crossing probability
 
 ```{r}
-exp(fixef(mm1)[1])/(1+exp(fixef(mm1)[1]))
+basecrossprob <- predict(mm3, newdata=data.frame(season=c('rainy',"dry"), Diameter=0), se.fit=T,type='response', re.form = NA)
 ```
 
-The baseline probability for all species is pretty high, we estimated it at 0.85 on average. The probability, however, will depend greatly on the species.
+The baseline probability for all species is high, around 0.75, but it also depends on the species. 
 
 ```{r}
-ranef(mm1) |> dotplot.ranef.mer()
+ranef(mm3) |> dotplot.ranef.mer()
 ```
 
 #### Effect of species
 
 ```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
-(as.data.frame(ranef(mm1)) %>% 
-  mutate(int = fixef(mm1)[1]) %>% 
-  mutate(est = exp(condval+int)/(1+exp(condval+int)),
-         hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
-         lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
-  # mutate(sp = fct_relabel(grp, )) %>% 
-  ggplot(aes(grp,est)) +
-  geom_hline(yintercept = 0.85, linetype=2) +
-        geom_point() + 
-        geom_errorbar(aes(ymin=lo,
-                           ymax=hi), width=0)+
-  scale_y_continuous(limits = c(NA,1))+
-  theme_classic(base_size = 14)+
-  theme(axis.text.x = element_text(angle = -45, hjust=0),
-        plot.margin = unit(c(1,6,1,1),'mm'))+
-  labs(x = "Species", y = "Base crossing probability")->psp)
+spp <- unique(mm3$frame$species)
+pspnewdata <- expand.grid(
+  Diameter = 0, 
+  season = c("rainy","dry"),
+  species = spp
+)
+ypred <- predict(mm3, type = "response", newdata = pspnewdata, se.fit = T) 
+cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
+    left_join(read.csv("../Data/spnames.csv")) %>% 
+  ggplot(aes(fct_reorder(plotname, mu), mu))+
+  geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=season), position = position_dodge(0.3))+
+  scale_color_manual(values = c("dodgerblue","gold2"), labels = c("Rainy","Dry"))+
+  theme_classic(base_size = 16)+
+  geom_hline(yintercept = basecrossprob$fit, linetype=2, color = c("dodgerblue","gold2"))+
+  theme(axis.text.x = element_text(angle = -45, hjust=0))+
+  labs(x = "Season", y="Crossing probability", color="Season")
 ```
 
 The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, coatis, and tamanduas, their base probability of crossing will be higher than the mean effect. Meanwhile, curassows, agoutis, and pacas, have lower probabilities than the mean. The mean base probability of crossing is 83%, taking the median values for all the covariates. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
 
-The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. Additionally, the 95% CIs indicate that there is a true effect of all the covariates on the probability of crossing. It is also possible that the effect of covariates varies across species. However, I tried other models with additional random effects, but none of these models performed better than the one with a random intercept.
+The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 
 
 #### Effect of covariates
 
