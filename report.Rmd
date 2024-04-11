@@ -252,6 +252,8 @@ check_overdispersion(zifreqmodel3)
 ```
 This model continues to be overdispersed and zero-inflated. Next let's build the same zero-inflated models with a negative binomial distribution instead of Poisson.
 
+#### Negative binomial models
+
 ```{r}
 freqmodel_nb <- glmmTMB(n ~ Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1+season|species), data = dat_glmm_week_freq, family = nbinom1)
 freqmodel_nb2 <- update(freqmodel_nb, ~Log_lenght+Diameter+Log_to_water+River_depth+season+Stream_width+(1|species))
@@ -274,7 +276,7 @@ SOOOO, THE FINAL DECISION (MAYBE). I fit a negative binomial mixed effects model
 
 
 ```{r}
-predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = 'dry'), type='response', se.fit = T, re.form = NA)
+predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = c('dry', 'rainy')), type='response', se.fit = T, re.form = NA)
 ```
 ```{r}
 icc(bestfreqmod)
@@ -283,42 +285,39 @@ The ICC of 0.10 indicates some small correlation within species, so it may not b
 
 #### Plot
 ```{r}
-mumean <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="dry", Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
-as.data.frame(ranef(bestfreqmod)) %>% 
-  mutate(int = fixef(bestfreqmod)[[1]][1]) %>% 
-  mutate(est = exp(condval+int)/(1+exp(condval+int)),
-         hi = exp(int+condval+2*condsd)/(1+exp(int+condval+2*condsd)),
-         lo = exp(int+condval-2*condsd)/(1+exp(int+condval-2*condsd))) %>% 
-  # mutate(sp = fct_relabel(grp, )) %>% 
-    left_join(read.csv("../Data/spnames.csv"), by = join_by(grp==species)) %>% 
-  ggplot(aes(fct_reorder(plotname, est),est)) +
-  geom_hline(yintercept = mumean, linetype=2) +
-        geom_point() + 
-        geom_errorbar(aes(ymin=lo,
-                           ymax=hi), width=0)+
-  theme_classic(base_size = 14)+
-  labs(x = "Species", y = "Use frequency (crossings/week)")+
-  theme_classic()+
-  theme(axis.text.x = element_text(angle = -35, hjust = 0),
-        plot.margin = unit(c(1,5,1,1), "mm"), 
-        aspect.ratio = 0.9,
-        panel.border = element_rect(fill=NA))
+mumean <- predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy"), Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
 
-
-
-basefreqpred <- predict(bestfreqmod, newdata = data.frame(Log_lenght=0, Stream_width=0, season="rainy", Log_to_water=0, River_depth=0, Diameter=0, species=unique(dat_glmm_week_freq$species)), type = "response", se.fit = T)
+basefreqpred <- predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy"), Log_to_water=0, River_depth=0, Diameter=0, species=unique(dat_glmm_week_freq$species)), type = "response", se.fit = T)
+# plot with one value per species (rainy)
 pfreqs <- data.frame(freq = basefreqpred$fit, se = basefreqpred$se.fit, species = unique(dat_glmm_week_freq$species)) %>% 
   left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot()+
   geom_hline(yintercept = mumean, lty=2)+
   geom_hline(yintercept = 0)+
   geom_pointrange(aes(y=freq, ymin = freq-2*se, ymax=freq+2*se, x=fct_reorder(plotname, freq)))+
-  labs(x = "Species", y = "Use frequency (crossings/week)")+
+  labs(x = "Species", y = "Crossing frequency (/week)")+
   theme_classic()+
   theme(axis.text.x = element_text(angle = -45, hjust = 0),
         plot.margin = unit(c(1,5,1,1), "mm"), 
         panel.border = element_rect(fill=NA))
 pfreqs
+
+# plot with rainy and dry seasons per species
+spp <- unique(bestfreqmod$frame$species)
+basefreqmu <- 
+basefreqnewdata <- expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy", "dry"), Log_to_water=0, River_depth=0, Diameter=0, species=unique(bestfreqmod$frame$species))
+basefreqpred <- predict(bestfreqmod, newdata = basefreqnewdata, type = "response", se.fit = T)
+basefreqmu <- predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy", "dry"), Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form = NA)
+pcols <- c("gold2","dodgerblue")
+pfreqs2 <- cbind(basefreqnewdata, mu=basefreqpred$fit, se=basefreqpred$se.fit) %>% 
+    left_join(read.csv("../Data/spnames.csv")) %>% 
+  ggplot(aes(fct_reorder(plotname, mu), mu))+
+  geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
+  scale_color_manual(values = pcols, labels = c("Dry","Rainy"))+
+  theme_classic(base_size = 16)+
+  geom_hline(yintercept = basefreqmu, linetype=2, color = rev(pcols))+
+  theme(axis.text.x = element_text(angle = -45, hjust=0))+
+  labs(x = "Season", y="Crossing frequency (/week)", color="Season")
 ```
 
 ```{r}
@@ -414,7 +413,12 @@ pses <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>%
   theme_classic(base_size = 12)+
   scale_x_discrete(labels = c("Dry","Rainy"))+
   labs(x = "Season", y="Crossing frequency (/week)")
-plot_grid(pfreqs,plot_grid(plen,pwid,pht,pdep,prwid,pses, align = 'hv', labels = 'auto'))
+newylims = scale_y_continuous(limits = c(0.16,0.72))
+```
+
+
+```{r}
+plot_grid(pfreqs2,plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims, align = 'hv', labels = letters[2:6]),labels='a', rel_widths = c(0.5,1),scale = c(0.8,1))
 ```
 
 ### Probability of crossing
@@ -494,7 +498,14 @@ The confidence intervals for the model indicate that the inter-species variance 
 
 ### Noteworthy behaviors
 
+```{r}
+count(dat, species , behavior) %>% filter(!is.na(behavior)) 
+```
+
 We see that many species use the logs, at multiple stations more than 10 different species were observed. This means that these features may be acting also as ways of communicating across and within species. In fact, we observed coatis (n = 23), common opossums (n = 1), striped skunks (n = 17), scent-marking on the logs. We also observed tamanduas defecating on logs on two occasions. It could be worth exploring whether these logs are important marking sites for territorial animals, and whether scent-marking prevents use by conspecifics. In addition to scent-marking sites, logs may act as a food source. We observed tamanduas and striped skunks foraging by removing the tree bark and searching for ants underneath, 10 times for tamanduas, but only once for skunks. We have observed this behavior in previous studies in the same area, so it is unlikely that logs across rivers constitute a more important source of food than logs fallen in the forest.
+```{r}
+
+```
 
 ### Time to event
 
