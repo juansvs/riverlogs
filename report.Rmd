@@ -33,7 +33,7 @@ We searched for logs across rivers throughout the Osa Wildlife Refuge in souther
 
 ```{r preproc, echo=FALSE}
 # Import data and preprocess
-dat_raw <- read_csv("../Data/timelapse_database.csv")
+dat_raw <- read_csv("timelapse_database.csv")
 # Filter to keep only unique records. Make sure to arrange it so that if there
 # is a crossing do not delete it.
 dat <- dat_raw %>% 
@@ -50,7 +50,7 @@ dat <- dat_raw %>%
   filter(newevent) %>% select(station, species, DateTime, eventcross, behavior)
 
 # Covariates data import and merge with detections
-log_data <- readxl::read_excel("../Data/covariates_data_base.xlsx")
+log_data <- readxl::read_excel("covariates_data_base.xlsx")
 names(log_data)[1] <- "station"
 dat_wcovs <- dat %>% left_join(log_data)
 # scale covariates for model fitting, join with detection data
@@ -63,7 +63,7 @@ dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 The total effort was 2374 trap-days, the shortest effort was 12 days at a station, and the longest 342 (counting both cameras together).
 
 ```{r}
-effortdb <- read.csv("../Data/effort.csv")
+effortdb <- read.csv("effort.csv")
 effortdb %>%  group_by(station, camera) %>% summarise(cumeffort = sum(effort)) 
 ```
 
