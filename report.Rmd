@@ -314,10 +314,10 @@ pfreqs2 <- cbind(basefreqnewdata, mu=basefreqpred$fit, se=basefreqpred$se.fit) %
   ggplot(aes(fct_reorder(plotname, mu), mu))+
   geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
   scale_color_manual(values = pcols, labels = c("Dry","Rainy"))+
-  theme_classic(base_size = 16)+
+  theme_classic(base_size = 12)+
   geom_hline(yintercept = basefreqmu, linetype=2, color = rev(pcols))+
-  theme(axis.text.x = element_text(angle = -45, hjust=0))+
-  labs(x = "Season", y="Crossing frequency (/week)", color="Season")
+  theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
+  labs(x = "Species", y="Crossing frequency (/week)", color="Season")
 ```
 
 ```{r}
@@ -418,7 +418,9 @@ newylims = scale_y_continuous(limits = c(0.16,0.72))
 
 
 ```{r}
-plot_grid(pfreqs2,plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims, align = 'hv', labels = letters[2:6]),labels='a', rel_widths = c(0.5,1),scale = c(0.8,1))
+png("figures/fig2_freqmodpreds.png", width = 10.5, height = 6, units = 'in',res = 300)
+plot_grid(pfreqs2+theme(plot.margin = unit(c(0,1,0,0),"cm")),plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims, align = 'hv', labels = letters[2:6]),labels='a',rel_widths = c(0.6,1), scale = c(0.9,1))
+dev.off()
 ```
 
 ### Probability of crossing
@@ -483,15 +485,17 @@ pspnewdata <- expand.grid(
   species = spp
 )
 ypred <- predict(mm3, type = "response", newdata = pspnewdata, se.fit = T) 
-cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
+#png()
+pprob <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
     left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, mu), mu))+
   geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=season), position = position_dodge(0.3))+
   scale_color_manual(values = c("dodgerblue","gold2"), labels = c("Rainy","Dry"))+
-  theme_classic(base_size = 16)+
+  theme_classic(base_size = 14)+
   geom_hline(yintercept = basecrossprob$fit, linetype=2, color = c("dodgerblue","gold2"))+
-  theme(axis.text.x = element_text(angle = -45, hjust=0))+
-  labs(x = "Season", y="Crossing probability", color="Season")
+  theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
+  labs(x = "Species", y="Crossing probability", color="Season")
+#dev.off()
 ```
 
 The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 

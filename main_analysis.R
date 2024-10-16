@@ -9,7 +9,8 @@ dat_raw
 # Filter to keep only unique records. Make sure to arrange it so that if there
 # is a crossing do not delete it.
 dat <- dat_raw %>% filter(!species %in% c("nothing", "setup", "corrupted","uid", 
-                                      "lizard_uid","iguana_green", "bat", "bird", "horse")) %>% # remove non-animal records
+                                      "lizard_uid","iguana_green", "bat", "bird", "horse", 
+                                      "people", "dog")) %>% # remove non-animal records
   group_by(station, species, camera) %>% arrange(DateTime) %>% 
   mutate(tdif = difftime(DateTime,lag(DateTime),units = "mins")) %>% # time difference between detections
   mutate(newevent = is.na(tdif) | tdif>duration(5, "minutes")) %>% ungroup() %>% # is the detection a new event?
@@ -27,21 +28,20 @@ dat %>% count(species) %>% arrange(desc(n)) %>% view()
 # species, however did not use the logs equally
 dat %>% count(species, eventcross) %>% 
   pivot_wider(names_from = eventcross, values_from = n, values_fill = 0) %>% 
-  mutate(prop = (.$2-.$))
   mutate(prop = (true-false)/false) %>% arrange(desc(false+true)) %>% view()
 
 # Tamanduas always were seen crossing the logs relatively often (5:1), similar to coatis
 # (7:1), opossums (13:1), skunks (11:1), tayras (6:1), ocelots (10:1), and pumas
 # (4:1). Some species like pacas and peccaries were observed but were never seen
 # on the logs
-
-# How about the difference between logs?
+# Plot these values, only for the most common species (>10 sightings)
 dat %>% count(station, species, eventcross) %>% 
   pivot_wider(names_from = eventcross, values_from = n, values_fill = 0) %>% 
   mutate(prop = `TRUE`/(`TRUE`+`FALSE`)) %>% 
   ggplot(aes(species,prop))+geom_boxplot()+
   theme_classic(base_size = 16)+
   theme(axis.text.x = element_text(hjust = 0, angle = -45))
+# How about the difference between logs?
 
 # Are animals using logs above rivers to cross them?
 # Yes, but not all, and not at the same frequency.
@@ -68,6 +68,3 @@ dat_wcovs %>% select(eventcross, Log_lenght, Diameter, Stream_width, Log_to_wate
 m1 <- glm(eventcross~Diameter+Log_lenght+Stream_width+Log_to_water, data = dat_wcovs, family = "binomial")
 plot(m1)
 summary(m1)
-# There are some logs where most of the events are
-# crossings we could do a hierarchical model where the probability of crossing
-# (binomial) is dependent on the species as well as the station
