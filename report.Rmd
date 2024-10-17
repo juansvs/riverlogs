@@ -312,12 +312,12 @@ pcols <- c("gold2","dodgerblue")
 pfreqs2 <- cbind(basefreqnewdata, mu=basefreqpred$fit, se=basefreqpred$se.fit) %>% 
     left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, mu), mu))+
-  geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
+  geom_hline(yintercept = basefreqmu, linetype=2, color = rev(pcols))+
+  geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3), show.legend = c(shape=T,color=F))+
   scale_color_manual(values = pcols, labels = c("Dry","Rainy"))+
   theme_classic(base_size = 12)+
-  geom_hline(yintercept = basefreqmu, linetype=2, color = rev(pcols))+
   theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
-  labs(x = "Species", y="Crossing frequency (/week)", color="Season")
+  labs(x = "Species", y="Crossing frequency (/week)", shape="Season")
 ```
 
 ```{r}
@@ -485,16 +485,17 @@ pspnewdata <- expand.grid(
   species = spp
 )
 ypred <- predict(mm3, type = "response", newdata = pspnewdata, se.fit = T) 
-#png()
 pprob <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
     left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, mu), mu))+
-  geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=season), position = position_dodge(0.3))+
-  scale_color_manual(values = c("dodgerblue","gold2"), labels = c("Rainy","Dry"))+
-  theme_classic(base_size = 14)+
   geom_hline(yintercept = basecrossprob$fit, linetype=2, color = c("dodgerblue","gold2"))+
+  geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3), show.legend = c(color=F,shape=T))+
+  scale_color_manual(values = c("gold2","dodgerblue"), labels = c("Rainy","Dry"))+
+  theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
-  labs(x = "Species", y="Crossing probability", color="Season")
+  labs(x = "Species", y="Crossing probability", shape="Season")
+#png("figures/fig3_prob.png", width = 6, height = 5, units = 'in', res = 300)
+#pprob
 #dev.off()
 ```
 
