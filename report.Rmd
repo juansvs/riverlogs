@@ -16,6 +16,7 @@ library(tidyverse)
 library(lubridate)
 library(lme4)
 library(performance)
+library(datawizard)
 ```
 
 ## Summary
@@ -284,6 +285,65 @@ icc(bestfreqmod)
 The ICC of 0.10 indicates some small correlation within species, so it may not be necessary to include the random effect.
 
 #### Plot
+
+##### Data plots
+
+Plot of crossing frequency (per week), for each species (x) in the rainy and dry seasons (color, shape).
+
+```{r}
+pcols <- c("gold2","dodgerblue")
+left_join(dat_glmm_week_freq, read.csv("../Data/spnames.csv")) %>% 
+  ggplot(aes(fct_reorder(plotname, n, max), n, color = season, shape = season))+
+  # geom_boxplot(outlier.shape = NULL)+
+  geom_point(position = position_jitterdodge())+
+  labs(x = "Species", y = "Crossing frequency (/week)", color = "Season", shape = "Season")+
+  scale_color_discrete(type = pcols, labels = c("Dry","Rainy"))+
+  scale_shape_discrete(labels = c("Dry", "Rainy"))+
+  theme_classic()+
+  theme(axis.text.x = element_text(angle = -45, hjust = 0),
+        plot.margin = unit(c(1,5,1,1), "mm"), 
+        panel.border = element_rect(fill=NA), 
+        legend.position = 'top') -> pfreqs_data
+```
+
+Plots of crossing frequency wrt to log covariates. 
+
+```{r}
+dat_freq_ogscale <- mutate(dat_glmm_week_freq, 
+       Log_length = unstandardise(Log_lenght),
+       Log_width = unstandardise(Diameter),
+       Height = unstandardise(Log_to_water), 
+       Depth = unstandardise(River_depth),
+       River_width = unstandardise(Stream_width))
+plen_data <- ggplot(dat_freq_ogscale, aes(Log_length, n))+
+  geom_point(position = position_jitter(), shape = 1)+
+  labs(x = "Log length (m)", y = "Frequency (/week)")
+pwid_data <- ggplot(dat_freq_ogscale, aes(Log_width, n))+
+  geom_point(position = position_jitter(), shape = 1)+
+  labs(x = "Log width (cm)", y = "Frequency (/week)")
+pht_data <- ggplot(dat_freq_ogscale, aes(Height, n))+
+  geom_point(position = position_jitter(), shape = 1)+
+  labs(x = "Height above water (m)", y = "Frequency (/week)")
+pdep_data <- ggplot(dat_freq_ogscale, aes(Depth, n))+
+  geom_point(position = position_jitter(), shape = 1)+
+  labs(x = "Stream depth (cm)", y = "Frequency (/week)")
+prwid_data <- ggplot(dat_freq_ogscale, aes(River_width, n))+
+  geom_point(position = position_jitter(), shape = 1)+
+  labs(x = "Stream width (m)", y = "Frequency (/week)")
+cowplot::plot_grid(plen_data, pwid_data, pht_data, pdep_data, labels = c('b','c','d','e'))
+```
+
+```{r}
+png("../figures/fig2_freq_data.png", width = 210, height = 148, units = "mm", res = 300)
+cowplot::plot_grid(pfreqs_data+theme(aspect.ratio = 1, plot.margin = unit(c(0,15,0,2), units = 'mm')),  labels = 'a', cowplot::plot_grid(plen_data, pwid_data, pht_data, pdep_data, labels = c('b','c','d','e')), rel_widths = c(4,5))
+dev.off()
+```
+
+
+##### Model predictions
+
+Model predicted (mean +- se) crossing frequency for different species in dry and rainy season. 
+
 ```{r}
 mumean <- predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy"), Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
 
@@ -313,11 +373,12 @@ pfreqs2 <- cbind(basefreqnewdata, mu=basefreqpred$fit, se=basefreqpred$se.fit) %
     left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, mu), mu))+
   geom_hline(yintercept = basefreqmu, linetype=2, color = rev(pcols))+
-  geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3), show.legend = c(shape=T,color=F))+
+  geom_pointrange(aes(ymin = mu-2*se, ymax = mu+2*se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
   scale_color_manual(values = pcols, labels = c("Dry","Rainy"))+
+  scale_shape_discrete(labels = c("Dry","Rainy"))+
   theme_classic(base_size = 12)+
   theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
-  labs(x = "Species", y="Crossing frequency (/week)", shape="Season")
+  labs(x = "Species", y="Crossing frequency (/week)", shape="Season", color = "Season")
 ```
 
 ```{r}
@@ -338,8 +399,7 @@ pht <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_to_wa
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "Height above water (m)", y="Crossing frequency (/week)")
-pspnewdata <- data.frame(Log_lenght = seq(min(bestfreqmod$frame$Log_lenght),
-                                            max(bestfreqmod$frame$Log_lenght),
+pspnewdata <- data.frame(Log_lenght = seq(min(bestfreqmod$frame$Log_lenght),    max(bestfreqmod$frame$Log_lenght),
                                             length.out = 100), 
            Diameter = 0, 
            Log_to_water = 0, 
