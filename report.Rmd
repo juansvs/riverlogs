@@ -291,11 +291,13 @@ The ICC of 0.10 indicates some small correlation within species, so it may not b
 Plot of crossing frequency (per week), for each species (x) in the rainy and dry seasons (color, shape).
 
 ```{r}
-pcols <- c("gold2","dodgerblue")
+# pcols <- c("gold2","dodgerblue")
+pcols <- c("orange","darkgreen")
 left_join(dat_glmm_week_freq, read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, n, max), n, color = season, shape = season))+
   # geom_boxplot(outlier.shape = NULL)+
-  geom_point(position = position_jitterdodge())+
+  # geom_point(position = position_jitterdodge())+
+  geom_count(position = position_dodge(0.7))+
   labs(x = "Species", y = "Crossing frequency (/week)", color = "Season", shape = "Season")+
   scale_color_discrete(type = pcols, labels = c("Dry","Rainy"))+
   scale_shape_discrete(labels = c("Dry", "Rainy"))+
@@ -315,19 +317,19 @@ dat_freq_ogscale <- mutate(dat_glmm_week_freq,
        Height = unstandardise(Log_to_water), 
        Depth = unstandardise(River_depth),
        River_width = unstandardise(Stream_width))
-plen_data <- ggplot(dat_freq_ogscale, aes(Log_length, n))+
+plen_data <- ggplot(dat_freq_ogscale, aes(Log_length, n, shape=season,color=season))+
   geom_point(position = position_jitter(), shape = 1)+
   labs(x = "Log length (m)", y = "Frequency (/week)")
-pwid_data <- ggplot(dat_freq_ogscale, aes(Log_width, n))+
+pwid_data <- ggplot(dat_freq_ogscale, aes(Log_width, n,shape=season,color=season))+
   geom_point(position = position_jitter(), shape = 1)+
   labs(x = "Log width (cm)", y = "Frequency (/week)")
-pht_data <- ggplot(dat_freq_ogscale, aes(Height, n))+
+pht_data <- ggplot(dat_freq_ogscale, aes(Height, n,shape=season,color=season))+
   geom_point(position = position_jitter(), shape = 1)+
   labs(x = "Height above water (m)", y = "Frequency (/week)")
-pdep_data <- ggplot(dat_freq_ogscale, aes(Depth, n))+
+pdep_data <- ggplot(dat_freq_ogscale, aes(Depth, n,shape=season,color=season))+
   geom_point(position = position_jitter(), shape = 1)+
   labs(x = "Stream depth (cm)", y = "Frequency (/week)")
-prwid_data <- ggplot(dat_freq_ogscale, aes(River_width, n))+
+prwid_data <- ggplot(dat_freq_ogscale, aes(River_width, n, shape=season,color=season))+
   geom_point(position = position_jitter(), shape = 1)+
   labs(x = "Stream width (m)", y = "Frequency (/week)")
 cowplot::plot_grid(plen_data, pwid_data, pht_data, pdep_data, labels = c('b','c','d','e'))
@@ -412,7 +414,8 @@ plen <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_leng
   geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
   geom_line()+
   theme_classic(base_size = 12)+
-  labs(x = "Log length (m)", y="Crossing frequency (/week)")
+  labs(x = "Log length (m)", y="Crossing frequency (/week)")+
+  geom_point(aes(), )
 pspnewdata <- data.frame(Diameter = seq(min(mod$frame$Diameter),
                                             max(mod$frame$Diameter),
                                             length.out = 100), 
@@ -477,9 +480,25 @@ newylims = scale_y_continuous(limits = c(0.16,0.72))
 ```
 
 
+Combined plots with data points and predicted lines.
+
+```{r}
+# Join the plots with the predictions for the rainy season (ie the higher prediction) with the actual data.
+p2b <- plen+geom_point(data=dat_freq_ogscale, aes(Log_length, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
+p2c <- pwid+geom_point(data=dat_freq_ogscale, aes(Log_width, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
+p2d <- pht+geom_point(data=dat_freq_ogscale, aes(Height, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
+p2e <- pdep+geom_point(data=dat_freq_ogscale, aes(Depth, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
+
+```
+
 ```{r}
 png("figures/fig2_freqmodpreds.png", width = 10.5, height = 6, units = 'in',res = 300)
-plot_grid(pfreqs2+theme(plot.margin = unit(c(0,1,0,0),"cm")),plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims, align = 'hv', labels = letters[2:6]),labels='a',rel_widths = c(0.6,1), scale = c(0.9,1))
+plot_grid(pfreqs_data+theme(plot.margin = unit(c(0,1,0,0),"cm")),
+          # plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims,
+          plot_grid(p2b,p2c,p2d,p2e,
+                    align = 'hv', labels = letters[2:6]),
+          labels='a',
+          rel_widths = c(0.75,1), scale = c(0.9,1))
 dev.off()
 ```
 
@@ -537,6 +556,10 @@ ranef(mm3) |> dotplot.ranef.mer()
 The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, and skunks the base probability of crossing will be higher than the mean effect. Meanwhile, agoutis and pacas, have lower probabilities than the mean. The mean base probability of crossing is 75%. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
 
 
+#### Plot
+
+
+
 ```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
 spp <- unique(mm3$frame$species)
 pspnewdata <- expand.grid(
@@ -548,18 +571,27 @@ ypred <- predict(mm3, type = "response", newdata = pspnewdata, se.fit = T)
 pprob <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
     left_join(read.csv("../Data/spnames.csv")) %>% 
   ggplot(aes(fct_reorder(plotname, mu), mu))+
-  geom_hline(yintercept = basecrossprob$fit, linetype=2, color = c("dodgerblue","gold2"))+
-  geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3), show.legend = c(color=F,shape=T))+
-  scale_color_manual(values = c("gold2","dodgerblue"), labels = c("Rainy","Dry"))+
+  geom_hline(yintercept = basecrossprob$fit, linetype=2, color = rev(pcols))+
+  geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
+  scale_color_manual(values = pcols, labels = c("Rainy","Dry"))+
+  scale_shape_discrete(labels = c("Rainy","Dry"))+
   theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
-  labs(x = "Species", y="Crossing probability", shape="Season")
+  labs(x = "Species", y="Crossing probability", shape="Season",color="Season")
 #png("figures/fig3_prob.png", width = 6, height = 5, units = 'in', res = 300)
 #pprob
 #dev.off()
 ```
 
 The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 
+
+Plot with data points
+
+```{r}
+summarise(dat_glmm, prop = sum(eventcross)/length(eventcross), .by = c(species, season))
+ggplot(dat_glmm)+geom_count(aes(species,eventcross, color=season), position = position_dodge(1))
+```
+
 
 ### Noteworthy behaviors
 
