@@ -17,6 +17,7 @@ library(lubridate)
 library(lme4)
 library(performance)
 library(datawizard)
+library(ggpubr)
 ```
 
 ## Summary
@@ -183,7 +184,8 @@ Below I create a database with the number of weekly detection for every station 
 weekeffort <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% distinct(station,species) %>% full_join(read.csv("../Data/station_weeks.csv"))
 
 # Create database for model
-dat_glmm_week_freq <- dat %>% group_by(species) %>% filter(n()>10, eventcross) %>% ungroup() %>% 
+dat_glmm_week_freq <- dat %>%  
+  filter(n()>10, eventcross, .by = species) %>% 
   mutate(wk = week(DateTime), yr = year(DateTime)) %>% 
   count(station,species,yr,wk) %>% 
   right_join(weekeffort) %>% arrange(station,yr,wk) %>% 
@@ -383,9 +385,13 @@ pfreqs2 <- cbind(basefreqnewdata, mu=basefreqpred$fit, se=basefreqpred$se.fit) %
   labs(x = "Species", y="Crossing frequency (/week)", shape="Season", color = "Season")
 ```
 
+Model predictions, changing one covariate while keeping the others at their mean.
+
 ```{r}
 og_vars_meansd <- cbind(apply(select(log_data, where(is.numeric)), 2, mean),
                         apply(select(log_data, where(is.numeric)), 2, sd))
+
+# Log to water
 pspnewdata <- data.frame(Log_to_water = seq(min(bestfreqmod$frame$Log_to_water),
                                             max(bestfreqmod$frame$Log_to_water),
                                             length.out = 100), 
@@ -401,6 +407,7 @@ pht <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_to_wa
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "Height above water (m)", y="Crossing frequency (/week)")
+# Log length
 pspnewdata <- data.frame(Log_lenght = seq(min(bestfreqmod$frame$Log_lenght),    max(bestfreqmod$frame$Log_lenght),
                                             length.out = 100), 
            Diameter = 0, 
@@ -414,8 +421,8 @@ plen <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_leng
   geom_ribbon(aes(ymin = mu-se, ymax = mu+se), fill = "gray80")+
   geom_line()+
   theme_classic(base_size = 12)+
-  labs(x = "Log length (m)", y="Crossing frequency (/week)")+
-  geom_point(aes(), )
+  labs(x = "Log length (m)", y="Crossing frequency (/week)")
+#Diameter
 pspnewdata <- data.frame(Diameter = seq(min(mod$frame$Diameter),
                                             max(mod$frame$Diameter),
                                             length.out = 100), 
@@ -431,6 +438,8 @@ pwid <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Diameter
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "Log width (cm)", y="Crossing frequency (/week)")
+
+# River depth
 pspnewdata <- data.frame(River_depth = seq(min(mod$frame$River_depth),
                                             max(mod$frame$River_depth),
                                             length.out = 100), 
@@ -446,6 +455,7 @@ pdep <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(River_de
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "River depth (cm)", y="Crossing frequency (/week)")
+# River width
 pspnewdata <- data.frame(Stream_width = seq(min(mod$frame$Stream_width),
                                             max(mod$frame$Stream_width),
                                             length.out = 100), 
@@ -461,6 +471,8 @@ prwid <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Stream_
   geom_line()+
   theme_classic(base_size = 12)+
   labs(x = "River width (m)", y="Crossing frequency (/week)")
+
+# River depth
 pspnewdata <- data.frame(
   River_depth = 0, 
            Log_to_water = 0,
@@ -476,6 +488,8 @@ pses <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>%
   theme_classic(base_size = 12)+
   scale_x_discrete(labels = c("Dry","Rainy"))+
   labs(x = "Season", y="Crossing frequency (/week)")
+
+# new limits so that graphs are comparable
 newylims = scale_y_continuous(limits = c(0.16,0.72))
 ```
 
@@ -490,6 +504,19 @@ p2d <- pht+geom_point(data=dat_freq_ogscale, aes(Height, n, shape=season,color=s
 p2e <- pdep+geom_point(data=dat_freq_ogscale, aes(Depth, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
 
 ```
+Export model predictions to figure.
+
+```{r}
+png("figures/fig2_modpreds.png", width = 10.5, height = 6, units = "in", res = 300)
+ggarrange(pfreqs2+theme(plot.margin = unit(c(5,5,5,5),"mm")),
+          ggarrange(plen+newylims,pwid+newylims, pht+newylims, pdep+newylims, 
+                    align = 'hv', labels = letters[2:5])+theme(plot.margin = unit(c(3,4,3,3),"mm")),
+          labels='a',
+          widths = c(0.75,1), heights = c(0.75,1))
+dev.off()
+```
+
+Export combined figures (data points and model predicted lines)
 
 ```{r}
 png("figures/fig2_freqmodpreds.png", width = 10.5, height = 6, units = 'in',res = 300)
@@ -512,10 +539,10 @@ library(lme4)
 # filter to keep only species with more than 10 records
 dat_glmm <- dat_wcovs_scaled %>% filter(station %in% c("CLOG03", "CLOG07", "CLOG08", "CLOG09", "PLOG02", "PLOG04")) %>% # only keep stations overlooking the near bank
   mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall) %>% 
-  group_by(species) %>% filter(n()>10) %>% ungroup()
+  filter(n()>10, .by=species) %>%
 # Build model with season as a covariate, a random effect of species, and multiple covariates
 mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+season+(1|species), data=dat_glmm, family = "binomial")
-# model without season or rain
+# model without season
 mm2 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+(1|species), data=dat_glmm, family = "binomial")
 #compare the two
 AIC(mm1,mm2)
@@ -527,25 +554,59 @@ The first model, with season, performs better than the one without.
 performance::check_model(mm1)
 ```
 
-The model performs quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables.
+The model performs quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables. I will do this stepwise, removing first the covariates with the highest VIF. 
 
 ```{r}
-mm3 <- glmmTMB(eventcross~Diameter+season+(1|species), data=dat_glmm, family = "binomial")
-check_model(mm3)
+check_collinearity(mm1)
+```
+Log diameter and length have very high VIF, we remove diameter first.
+```{r}
+check_collinearity(update(mm1, .~.-Diameter))
+```
+Following the same process, we eliminate also log length and river depth. 
+```{r}
+check_collinearity(update(mm1, .~.-Diameter-Log_lenght-River_depth))
+```
+```{r}
+summary(update(mm1, .~.-Diameter-Log_lenght-River_depth))
+```
+This model does not have strong collinearities, but we can see if there is a more parsimonious model, we remove the covariate with the lowest z value.
+
+```{r}
+AIC(mm1,
+    update(mm1, .~.-Diameter-Log_lenght-River_depth),
+    update(mm1, .~.-Diameter-Log_lenght-River_depth-Stream_width))
 ```
 
 ```{r}
+summary(update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width))
+```
+This model has a lower AIC (\delta AIC = 3.7) than the saturated model, and than the one with low collinearity (\delta AIC = 2.0). Removing one additional non-significant variable does not improve the fit. The most parsimonious model is therefore the one with fixed effects of season and height above water.
+
+```{r}
+summary(update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water))
+```
+```{r}
+compare_performance(mm1,                     update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width),                    update(mm1,.~.-Diameter-Log_lenght-River_depth),                  update(mm1,.~.-Diameter-Log_lenght),
+                    update(mm1, .~.-Diameter),                    update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water),                     update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water-season), metrics = 'common')
+```
+
+
+
+```{r}
+mm3 <- glmmTMB(eventcross~Log_to_water+season+(1|species), data=dat_glmm, family = "binomial")
 summary(mm3)
 ```
-The best performing model is the one with only Diameter and season, and only season has a significant effect. The likelihood of crossing is higher during the rainy season.
+
+The best performing model is the one with only height above water and season, and only season has a significant effect. The likelihood of crossing is higher during the rainy season.
 
 #### Baseline crossing probability
 
 ```{r}
-basecrossprob <- predict(mm3, newdata=data.frame(season=c('rainy',"dry"), Diameter=0), se.fit=T,type='response', re.form = NA)
+(basecrossprob <- predict(mm3, newdata=data.frame(season=c('rainy',"dry"), Log_to_water=0), se.fit=T,type='response', re.form = NA))
 ```
 
-The baseline probability for all species is high, around 0.75, but it also depends on the species. 
+The baseline probability for all species is high, around 0.76, but it also depends on the species. 
 
 #### Effect of species
 
@@ -558,29 +619,32 @@ The random effect shows that for about half of the species, the intercept is not
 
 #### Plot
 
-
-
 ```{r ranef, echo=FALSE, fig.cap="Random effect of species on the intercept in the mixed effects model of crossing probability"}
 spp <- unique(mm3$frame$species)
 pspnewdata <- expand.grid(
-  Diameter = 0, 
+  Log_to_water = 0, 
   season = c("rainy","dry"),
   species = spp
 )
 ypred <- predict(mm3, type = "response", newdata = pspnewdata, se.fit = T) 
-pprob <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
-    left_join(read.csv("../Data/spnames.csv")) %>% 
-  ggplot(aes(fct_reorder(plotname, mu), mu))+
+pprobdat <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% 
+    left_join(read.csv("../Data/spnames.csv")) 
+pprob <- ggplot(pprobdat,aes(fct_reorder(plotname, mu), mu))+
   geom_hline(yintercept = basecrossprob$fit, linetype=2, color = rev(pcols))+
   geom_pointrange(aes(ymin = mu-se, ymax = mu+se, color=fct_relevel(season,c("dry","rainy")),shape=fct_relevel(season,c("dry","rainy"))), position = position_dodge(0.3))+
-  scale_color_manual(values = pcols, labels = c("Rainy","Dry"))+
-  scale_shape_discrete(labels = c("Rainy","Dry"))+
-  theme_classic(base_size = 14)+
+  scale_color_manual(values = pcols, labels = c("Dry","Rainy"))+
+  scale_shape_discrete(labels = c("Dry","Rainy"))+
+  # theme_classic(base_size = 14)+
   theme(axis.text.x = element_text(angle = -45, hjust=0), legend.position = 'top')+
   labs(x = "Species", y="Crossing probability", shape="Season",color="Season")
-#png("figures/fig3_prob.png", width = 6, height = 5, units = 'in', res = 300)
-#pprob
-#dev.off()
+pprob
+```
+
+
+```{r}
+png("figures/fig3_prob.png", width = 8, height = 10, units = 'cm', res=300)
+pprob+theme_classic()+theme(legend.position = 'top', axis.text.x = element_text(angle = -45, hjust = 0))
+dev.off()
 ```
 
 The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 
@@ -600,9 +664,7 @@ count(dat, species , behavior) %>% filter(!is.na(behavior))
 ```
 
 We see that many species use the logs, at multiple stations more than 10 different species were observed. This means that these features may be acting also as ways of communicating across and within species. In fact, we observed coatis (n = 23), common opossums (n = 1), striped skunks (n = 17), scent-marking on the logs. We also observed tamanduas defecating on logs on two occasions. It could be worth exploring whether these logs are important marking sites for territorial animals, and whether scent-marking prevents use by conspecifics. In addition to scent-marking sites, logs may act as a food source. We observed tamanduas and striped skunks foraging by removing the tree bark and searching for ants underneath, 10 times for tamanduas, but only once for skunks. We have observed this behavior in previous studies in the same area, so it is unlikely that logs across rivers constitute a more important source of food than logs fallen in the forest.
-```{r}
 
-```
 
 ### Time to event
 
