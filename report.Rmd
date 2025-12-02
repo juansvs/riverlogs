@@ -2,7 +2,6 @@
 title: "Log crossing activity in a tropical rainforest"
 author: "Juan S. Vargas Soto"
 output: html_document
-bibliography: references.bib
 editor_options: 
   chunk_output_type: inline
 ---
@@ -18,12 +17,12 @@ library(lme4)
 library(performance)
 library(datawizard)
 library(ggpubr)
+library(glmmTMB)
 ```
 
 ## Summary
 
-We analyzed how different species of mammals use logs fallen across rivers in a tropical wet forest. We found that most species observed use logs to cross rivers, but there are significant differences among species, both in the frequency of detection at these logs, and the probability that they will cross; some are much more likely to use them. While some factors like the length of the log, its width, and how high it is above the water may increase this probability, these effects are small compared to baseline differences among species. Also, seasonality does not appear to play an important role in the probability of use of the log, although many of our cameras were only working during the rainy season so this factor is not clear yet. 
-The species that use logs to cross most frequently are species that regularly use tree trunks and branches like coatis, opossums, and ocelots, so crossing these bridges should not represent an important risk. Some species that did not cross the logs, like pacas and tapirs, were nonetheless observed walking in the water, so it is possible that they are also able to cross rivers regularly despite not using logs. This is not the case for agoutis, which had a low probability of crossing, and were also never observed in the river. For agoutis, rivers may therefore represent significant barriers that limit their home range. Considering the diversity and frequency of use of these logs, they may define important linear features in the forest. As such, they could represent also important sites for communication, as seen by the frequent scent-marking, for male coatis in particular.
+We analyzed how different species of mammals use logs fallen across rivers in a tropical wet forest. We found that most species observed use logs to cross rivers, but there are significant differences among species, both in the frequency of detection at these logs, and the probability that they will cross; some are much more likely to use them. While some factors like the length of the log, its width, and how high it is above the water may increase this probability, these effects are small compared to baseline differences among species. Also, seasonality does not appear to play an important role in the probability of use of the log, although many of our cameras were only working during the rainy season so this factor is not clear yet. The species that use logs to cross most frequently are species that regularly use tree trunks and branches like coatis, opossums, and ocelots, so crossing these bridges should not represent an important risk. Some species that did not cross the logs, like pacas and tapirs, were nonetheless observed walking in the water, so it is possible that they are also able to cross rivers regularly despite not using logs. This is not the case for agoutis, which had a low probability of crossing, and were also never observed in the river. For agoutis, rivers may therefore represent significant barriers that limit their home range. Considering the diversity and frequency of use of these logs, they may define important linear features in the forest. As such, they could represent also important sites for communication, as seen by the frequent scent-marking, for male coatis in particular.
 
 ## Introduction
 
@@ -59,9 +58,11 @@ dat_wcovs <- dat %>% left_join(log_data)
 log_data_scaled <- mutate(log_data, across(Log_lenght:Vel_conver,datawizard::standardise))
 dat_wcovs_scaled <- left_join(dat,log_data_scaled)
 ```
+
 ## Results
 
 ### Effort
+
 The total effort was 2374 trap-days, the shortest effort was 12 days at a station, and the longest 342 (counting both cameras together).
 
 ```{r}
@@ -77,7 +78,8 @@ dat_raw %>% filter(!DeleteFlag) %>%
   geom_point(aes(color = camera),position = position_dodge(width = 0.5))+
   geom_point(aes(color = camera), shape = 2, data = \(x) filter(x,setup), position = position_dodge(width = 0.5))
 ```
-We see that the effort was distributed in two periods. The first was between June and October 2020, all within the rainy season. In 2021, only five stations were deployed again, starting in March 2021. These cameras would have had two months of dry season, and the beginning of the rainy season in May/June. This is important to account for the total effort. I've created a file with the dates for the different periods. 
+
+We see that the effort was distributed in two periods. The first was between June and October 2020, all within the rainy season. In 2021, only five stations were deployed again, starting in March 2021. These cameras would have had two months of dry season, and the beginning of the rainy season in May/June. This is important to account for the total effort. I've created a file with the dates for the different periods.
 
 ### Species observed
 
@@ -166,8 +168,6 @@ plot(m1)
 summary(m1)
 ```
 
-
-
 ### Crossing frequency
 
 There were 1066 independent events, so 1096/2374 trap days = 0.45 /day, but this varied across stations, between 0.05 and 1.1 events/day.
@@ -176,7 +176,7 @@ There were 1066 independent events, so 1096/2374 trap days = 0.45 /day, but this
 dat %>% group_by(station) %>% left_join(summarise(effortdb, effort = sum(effort),.by = station)) %>% summarize(n = n(), freq = n()/mean(effort),prop = sum(eventcross)/n())
 ```
 
-We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies. The weeks that the camera was working are in a csv file. 
+We analyze the number of animals seen crossing. For this, we divide the detection into weekly detection frequencies. The weeks that the camera was working are in a csv file.
 
 Below I create a database with the number of weekly detection for every station and species
 
@@ -193,7 +193,9 @@ dat_glmm_week_freq <- dat %>%
   mutate(month = ceiling(wk/4.3), season = if_else(wk>16&wk<48, "rainy","dry")) %>% 
   left_join(rainfall) %>% left_join(log_data_scaled) 
 ```
-With the database, we can run the models. First I will find the most appropriate random effect structure. The base frequency (intercept) should be related to the species, some are just more abundant than others. Previous studies have also found that seasonality impacts different species differently, so this can also be included as a random effect. For this first step I will include all covariates of interest, i.e. the stream width and depth, log height, log width, log length, and season. The response variable is the number of crossings by species per week. 
+
+With the database, we can run the models. First I will find the most appropriate random effect structure. The base frequency (intercept) should be related to the species, some are just more abundant than others. Previous studies have also found that seasonality impacts different species differently, so this can also be included as a random effect. For this first step I will include all covariates of interest, i.e. the stream width and depth, log height, log width, log length, and season. The response variable is the number of crossings by species per week.
+
 ```{r}
 freqmodels <- list()
 # run model. Mixed effects model of number of detections per week wrt covariates. 
@@ -203,13 +205,12 @@ freqmodels$full_NoRnd <- glm(n ~ Log_lenght+Diameter+Log_to_water+River_depth+se
 
 AIC(freqmodels[[1]],freqmodels[[2]], freqmodels[[3]])
 ```
-The best structure seems to be the model with both season and species as random effects. In this model, all covariates have a clear effect on the number of detections. There would be fewer crossings for deeper rivers, and more crossings for longer, wider logs higher above the water. 
+
+The best structure seems to be the model with both season and species as random effects. In this model, all covariates have a clear effect on the number of detections. There would be fewer crossings for deeper rivers, and more crossings for longer, wider logs higher above the water.
 
 ```{r}
 summary(freqmodels$full_RndIntSsn)
 ```
-
-
 
 ```{r}
 ranef(freqmodels$full_RndIntSsn) |> dotplot.ranef.mer()
@@ -234,12 +235,14 @@ zifreqmodel <- glmmTMB(formula(freqmodels$full_RndIntSsn), data = dat_glmm_week_
 zifreqmodel2 <- update(zifreqmodel, ~.-(1+season|species)+(1|species))
 AIC(zifreqmodel, zifreqmodel2, freqmodels$full_RndIntSsn)
 ```
+
 The best model in this case is the one with both random effects (intercept and season). Both zero-inflated models have a significantly lower AIC than the Poisson model
 
 ```{r}
 check_zeroinflation(zifreqmodel)
 check_overdispersion(zifreqmodel)
 ```
+
 This model still has overdispersion and zero-inflation. Here I include covariates in the zero-inflation model. I attempt to include the station or the species as a random effect.
 
 ```{r}
@@ -247,12 +250,14 @@ zifreqmodel3 <- update(zifreqmodel, ziformula = ~ (1|station))
 zifreqmodel4 <- update(zifreqmodel, ziformula = ~ (1|species))
 AIC(zifreqmodel,zifreqmodel2, zifreqmodel3, zifreqmodel4)
 ```
-Out of these, the best model according to AIC is the one that includes station as a random effect in the binomial false zero model. 
+
+Out of these, the best model according to AIC is the one that includes station as a random effect in the binomial false zero model.
 
 ```{r}
 check_zeroinflation(zifreqmodel3)
 check_overdispersion(zifreqmodel3)
 ```
+
 This model continues to be overdispersed and zero-inflated. Next let's build the same zero-inflated models with a negative binomial distribution instead of Poisson.
 
 #### Negative binomial models
@@ -264,26 +269,31 @@ zinbfreqmod <- glmmTMB(formula = formula(freqmodel_nb), data = dat_glmm_week_fre
 zinbfreqmod2 <- glmmTMB(formula = formula(freqmodel_nb2), data = dat_glmm_week_freq, family = nbinom1, ziformula = ~ 1)
 AIC(freqmodel_nb2, freqmodel_nb, zinbfreqmod2, zinbfreqmod)
 ```
-All these models have lower AIC than the ones with a Poisson distribution. Out of them, the best model is the one with negative binomial distribution and season as a fixed effect. 
+
+All these models have lower AIC than the ones with a Poisson distribution. Out of them, the best model is the one with negative binomial distribution and season as a fixed effect.
 
 ```{r}
 check_zeroinflation(freqmodel_nb2)
 check_overdispersion(freqmodel_nb2)
 ```
-This model is still overdispersed but not zero-inflated.  
+
+This model is still overdispersed but not zero-inflated.
+
 ```{r}
 bestfreqmod <- freqmodel_nb2
 summary(bestfreqmod)
 ```
-SOOOO, THE FINAL DECISION (MAYBE). I fit a negative binomial mixed effects model with the number of detections as a response variable. I included a random intercept species.  I included the log length, log width, height above water, stream width, stream depth, and season as fixed effects. 
 
+Conclusion. I fit a negative binomial mixed effects model with the number of detections as a response variable. I included a random intercept species. I included the log length, log width, height above water, stream width, stream depth, and season as fixed effects.
 
 ```{r}
 predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Diameter=0, Log_to_water=0, River_depth=0, Stream_width=0, season = c('dry', 'rainy')), type='response', se.fit = T, re.form = NA)
 ```
+
 ```{r}
 icc(bestfreqmod)
 ```
+
 The ICC of 0.10 indicates some small correlation within species, so it may not be necessary to include the random effect.
 
 #### Plot
@@ -310,7 +320,7 @@ left_join(dat_glmm_week_freq, read.csv("../Data/spnames.csv")) %>%
         legend.position = 'top') -> pfreqs_data
 ```
 
-Plots of crossing frequency wrt to log covariates. 
+Plots of crossing frequency wrt to log covariates.
 
 ```{r}
 dat_freq_ogscale <- mutate(dat_glmm_week_freq, 
@@ -343,10 +353,9 @@ cowplot::plot_grid(pfreqs_data+theme(aspect.ratio = 1, plot.margin = unit(c(0,15
 dev.off()
 ```
 
-
 ##### Model predictions
 
-Model predicted (mean +- se) crossing frequency for different species in dry and rainy season. 
+Model predicted (mean +- se) crossing frequency for different species in dry and rainy season.
 
 ```{r}
 mumean <- predict(bestfreqmod, newdata = expand.grid(Log_lenght=0, Stream_width=0, season=c("rainy"), Log_to_water=0, River_depth=0, Diameter=0), type = "response", re.form=NA)
@@ -423,8 +432,8 @@ plen <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Log_leng
   theme_classic(base_size = 12)+
   labs(x = "Log length (m)", y="Crossing frequency (/week)")
 #Diameter
-pspnewdata <- data.frame(Diameter = seq(min(mod$frame$Diameter),
-                                            max(mod$frame$Diameter),
+pspnewdata <- data.frame(Diameter = seq(min(bestfreqmod$frame$Diameter),
+                                            max(bestfreqmod$frame$Diameter),
                                             length.out = 100), 
            Log_to_water=0,
            Log_lenght = 0, 
@@ -440,8 +449,8 @@ pwid <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(Diameter
   labs(x = "Log width (cm)", y="Crossing frequency (/week)")
 
 # River depth
-pspnewdata <- data.frame(River_depth = seq(min(mod$frame$River_depth),
-                                            max(mod$frame$River_depth),
+pspnewdata <- data.frame(River_depth = seq(min(bestfreqmod$frame$River_depth),
+                                            max(bestfreqmod$frame$River_depth),
                                             length.out = 100), 
            Log_to_water = 0,
            Diameter = 0, 
@@ -456,8 +465,8 @@ pdep <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>% ggplot(aes(River_de
   theme_classic(base_size = 12)+
   labs(x = "River depth (cm)", y="Crossing frequency (/week)")
 # River width
-pspnewdata <- data.frame(Stream_width = seq(min(mod$frame$Stream_width),
-                                            max(mod$frame$Stream_width),
+pspnewdata <- data.frame(Stream_width = seq(min(bestfreqmod$frame$Stream_width),
+                                            max(bestfreqmod$frame$Stream_width),
                                             length.out = 100), 
            Log_to_water = 0,
            Diameter = 0, 
@@ -493,7 +502,6 @@ pses <- cbind(pspnewdata, mu=ypred$fit, se=ypred$se.fit) %>%
 newylims = scale_y_continuous(limits = c(0.16,0.72))
 ```
 
-
 Combined plots with data points and predicted lines.
 
 ```{r}
@@ -504,6 +512,7 @@ p2d <- pht+geom_point(data=dat_freq_ogscale, aes(Height, n, shape=season,color=s
 p2e <- pdep+geom_point(data=dat_freq_ogscale, aes(Depth, n, shape=season,color=season),position = position_jitter(), show.legend = F)+scale_color_discrete(type = pcols)#+scale_shape_discrete(solid = F)
 
 ```
+
 Export model predictions to figure.
 
 ```{r}
@@ -520,9 +529,9 @@ Export combined figures (data points and model predicted lines)
 
 ```{r}
 png("figures/fig2_freqmodpreds.png", width = 10.5, height = 6, units = 'in',res = 300)
-plot_grid(pfreqs_data+theme(plot.margin = unit(c(0,1,0,0),"cm")),
+ggarrange(pfreqs_data+theme(plot.margin = unit(c(0,1,0,0),"cm")),
           # plot_grid(plen+newylims,pwid+newylims,pht+newylims,pdep+newylims,prwid+newylims,
-          plot_grid(p2b,p2c,p2d,p2e,
+          ggarrange(p2b,p2c,p2d,p2e,
                     align = 'hv', labels = letters[2:6]),
           labels='a',
           rel_widths = c(0.75,1), scale = c(0.9,1))
@@ -533,13 +542,14 @@ dev.off()
 
 To analyze how the probability of crossing is influenced by different covariates, we used a binomial generalized linear model (GLM), where the response variable was whether the animal crossed or not for every observation, and with some selected covariates as predictors. In addition to the variables seen previously, I will also include the season, as rain will have significant effects on water level and flow. For one, the rain affects the water level, some streams will become easier to pass, rendering the logs unnecessary. Secondly, animals change their activity ranges in rainy and dry seasons, so there may be differences in overall activity near the streams. There are some clear differences between the species in their behavior and whether they tend to cross logs or not. We include a random effect of species to account for these differences. For this model, we include only species that had 10 or more records over the study period. In this analysis we only use cameras were you can see enough of the proximate bank to detect animals that do not cross. Most cameras were directed towards the middle of the log, so they would only be triggered once an animal was on the log.
 
-```{r mm fit, echo=FALSE, fig.height=7, fig.cap="Diagnostic plots for mixed effects binomial model of crossing probability"}
+```{r mm fit}
 library(lme4)
 # Add the season to the database
 # filter to keep only species with more than 10 records
-dat_glmm <- dat_wcovs_scaled %>% filter(station %in% c("CLOG03", "CLOG07", "CLOG08", "CLOG09", "PLOG02", "PLOG04")) %>% # only keep stations overlooking the near bank
+dat_glmm <- dat_wcovs_scaled %>% 
+  filter(station %in% c("CLOG03", "CLOG07", "CLOG08", "CLOG09", "PLOG02", "PLOG04")) %>% # only keep stations overlooking the near bank
   mutate(month = month(DateTime), season = if_else(lubridate::month(DateTime) %in% c(1:4,12),"dry","rainy")) %>% left_join(rainfall) %>% 
-  filter(n()>10, .by=species) %>%
+  filter(n()>10, .by=species) 
 # Build model with season as a covariate, a random effect of species, and multiple covariates
 mm1 <- glmer(eventcross~Log_to_water+Diameter+Log_lenght+Stream_width+River_depth+season+(1|species), data=dat_glmm, family = "binomial")
 # model without season
@@ -554,22 +564,28 @@ The first model, with season, performs better than the one without.
 performance::check_model(mm1)
 ```
 
-The model performs quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables. I will do this stepwise, removing first the covariates with the highest VIF. 
+The model performs quite poorly, there is significant VIF, probably due to the low number of logs. Let's reduce the number of variables. I will do this stepwise, removing first the covariates with the highest VIF.
 
 ```{r}
 check_collinearity(mm1)
 ```
+
 Log diameter and length have very high VIF, we remove diameter first.
+
 ```{r}
 check_collinearity(update(mm1, .~.-Diameter))
 ```
-Following the same process, we eliminate also log length and river depth. 
+
+Following the same process, we eliminate also log length and river depth.
+
 ```{r}
 check_collinearity(update(mm1, .~.-Diameter-Log_lenght-River_depth))
 ```
+
 ```{r}
 summary(update(mm1, .~.-Diameter-Log_lenght-River_depth))
 ```
+
 This model does not have strong collinearities, but we can see if there is a more parsimonious model, we remove the covariate with the lowest z value.
 
 ```{r}
@@ -581,17 +597,17 @@ AIC(mm1,
 ```{r}
 summary(update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width))
 ```
+
 This model has a lower AIC (\delta AIC = 3.7) than the saturated model, and than the one with low collinearity (\delta AIC = 2.0). Removing one additional non-significant variable does not improve the fit. The most parsimonious model is therefore the one with fixed effects of season and height above water.
 
 ```{r}
 summary(update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water))
 ```
+
 ```{r}
 compare_performance(mm1,                     update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width),                    update(mm1,.~.-Diameter-Log_lenght-River_depth),                  update(mm1,.~.-Diameter-Log_lenght),
                     update(mm1, .~.-Diameter),                    update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water),                     update(mm1,.~.-Diameter-Log_lenght-River_depth-Stream_width-Log_to_water-season), metrics = 'common')
 ```
-
-
 
 ```{r}
 mm3 <- glmmTMB(eventcross~Log_to_water+season+(1|species), data=dat_glmm, family = "binomial")
@@ -606,16 +622,11 @@ The best performing model is the one with only height above water and season, an
 (basecrossprob <- predict(mm3, newdata=data.frame(season=c('rainy',"dry"), Log_to_water=0), se.fit=T,type='response', re.form = NA))
 ```
 
-The baseline probability for all species is high, around 0.76, but it also depends on the species. 
+The baseline probability for all species is high, around 0.76, but it also depends on the species.
 
 #### Effect of species
 
-```{r}
-ranef(mm3) |> dotplot.ranef.mer()
-```
-
 The random effect shows that for about half of the species, the intercept is not clearly different from the mean intercept. For ocelots, common opossums, and skunks the base probability of crossing will be higher than the mean effect. Meanwhile, agoutis and pacas, have lower probabilities than the mean. The mean base probability of crossing is 75%. Transformed to base probabilities, we see that there are large differences, for coatis, opossums, and ocelots, the base probability of crossing is greater than 70%, while for agoutis it is less than 20%, and practically zero for pacas.
-
 
 #### Plot
 
@@ -640,14 +651,13 @@ pprob <- ggplot(pprobdat,aes(fct_reorder(plotname, mu), mu))+
 pprob
 ```
 
-
 ```{r}
 png("figures/fig3_prob.png", width = 8, height = 10, units = 'cm', res=300)
 pprob+theme_classic()+theme(legend.position = 'top', axis.text.x = element_text(angle = -45, hjust = 0))
 dev.off()
 ```
 
-The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly. 
+The confidence intervals for the model indicate that the inter-species variance in the intercept is significantly different from 0, and should be considered explicitly.
 
 Plot with data points
 
@@ -656,7 +666,6 @@ summarise(dat_glmm, prop = sum(eventcross)/length(eventcross), .by = c(species, 
 ggplot(dat_glmm)+geom_count(aes(species,eventcross, color=season), position = position_dodge(1))
 ```
 
-
 ### Noteworthy behaviors
 
 ```{r}
@@ -664,7 +673,6 @@ count(dat, species , behavior) %>% filter(!is.na(behavior))
 ```
 
 We see that many species use the logs, at multiple stations more than 10 different species were observed. This means that these features may be acting also as ways of communicating across and within species. In fact, we observed coatis (n = 23), common opossums (n = 1), striped skunks (n = 17), scent-marking on the logs. We also observed tamanduas defecating on logs on two occasions. It could be worth exploring whether these logs are important marking sites for territorial animals, and whether scent-marking prevents use by conspecifics. In addition to scent-marking sites, logs may act as a food source. We observed tamanduas and striped skunks foraging by removing the tree bark and searching for ants underneath, 10 times for tamanduas, but only once for skunks. We have observed this behavior in previous studies in the same area, so it is unlikely that logs across rivers constitute a more important source of food than logs fallen in the forest.
-
 
 ### Time to event
 
@@ -682,7 +690,8 @@ d <- dat %>% group_by(station,species) %>%
 spcomb <- lapply(d, function(x) outer(x$species,x$species,paste, sep="-"))
 tdif <- lapply(d, function(x) outer(x$DateTime, x$DateTime, difftime, units = "mins"))
 ddif <- data.frame(station = rep(names(spcomb), times = sapply(spcomb, length)), 
-                sppair = unlist(spcomb), tdif = unlist(tdif)) %>% 
+                sppair = unlist(spcomb), 
+                tdif = unlist(tdif)) %>% 
   filter(tdif > 0, # only positive differences
          tdif <= 24*60) %>% # only differences less than a day
   # mutate(spp = str_split(sppair, "-")) %>% 
@@ -776,7 +785,7 @@ This figure shows the observed lags in minutes for the species pairs that we fou
 
 ```{r}
 # plot lags
-do.call(rbind,d[sig_mods]) %>% 
+do.call(rbind,ddif[sig_mods]) %>% 
   ggplot(aes(spp,tdif))+geom_boxplot(aes(fill = sppair))+
   theme_classic(base_size = 12)+
   labs(y = "Time difference (minutes)",
@@ -784,12 +793,4 @@ do.call(rbind,d[sig_mods]) %>%
   theme(axis.text.x = element_text(hjust = 0, angle = -45))
 ```
 
-I also determined the lag for individuals of the same species.
 
-```{r}
-# I could also buid a mixed model with these data
-m <- glm(tdif~sppair, data = d, family = gaussian(link = "log"))
-summary(m)
-```
-
-I created a linear model with the species as a predictor, and the time lag as a response. I used only the same-species times, to find the mean lag, and only times less than 12 h away to avoid bimodal distributions. The model estimates a mean lag of 175 minutes, or almost 3 hours, and there was no clear difference for any species.
